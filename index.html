@@ -1,0 +1,1859 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>求职助手 JobTracker</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <!-- marked.js — Markdown 渲染 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+  <!-- PDF.js — PDF 文字提取 (Step 7) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- mammoth.js — Word 文字提取 (Step 7) -->
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+
+  <style>
+    [v-cloak] { display: none; }
+    /* Markdown prose 渲染 */
+    .prose h1,.prose h2,.prose h3 { font-weight:600; margin-top:1.1em; margin-bottom:.4em; color:#111827; }
+    .prose h2 { font-size:1.05em; }
+    .prose h3 { font-size:.95em; color:#374151; }
+    .prose ul  { list-style:disc;    padding-left:1.4em; margin-bottom:.6em; }
+    .prose ol  { list-style:decimal; padding-left:1.4em; margin-bottom:.6em; }
+    .prose li  { margin-bottom:.25em; font-size:.875rem; line-height:1.6; }
+    .prose p   { margin-bottom:.6em; font-size:.875rem; line-height:1.7; color:#374151; }
+    .prose strong { font-weight:600; }
+    .prose hr  { border-color:#e5e7eb; margin:1em 0; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<div id="app" v-cloak>
+
+  <!-- 全局遮罩：点击关闭浮层 -->
+  <div v-if="activeBadgePicker" @click="closeBadgePicker()" class="fixed inset-0 z-10"></div>
+
+  <!-- ── 顶部导航栏 ── -->
+  <nav class="bg-white border-b border-gray-200 sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+      <a href="#list" class="flex items-center gap-2 text-blue-600 font-bold text-lg select-none">
+        <span class="text-2xl">🎯</span>
+        <span>求职助手</span>
+      </a>
+      <div class="flex items-center gap-1">
+        <a href="#list" :class="navClass(['list', 'add', 'edit', 'detail'])">投递列表</a>
+        <a href="#settings" :class="navClass(['settings'])">设置</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── 主内容区 ── -->
+  <main class="max-w-5xl mx-auto px-4 py-8">
+
+    <!-- 投递列表 -->
+    <div v-if="page === 'list'">
+      <!-- 标题行 -->
+      <div class="flex items-center justify-between mb-5">
+        <h1 class="text-2xl font-bold text-gray-900">
+          投递记录
+          <span class="ml-2 text-base font-normal text-gray-400">{{ filteredApplications.length }} / {{ applications.length }}</span>
+        </h1>
+        <div class="flex items-center gap-2">
+          <!-- 搜索框 -->
+          <div class="relative">
+            <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+            <input v-model="searchQuery" type="text" placeholder="搜索公司 / 岗位 / 城市"
+                   class="text-sm border border-gray-300 rounded-lg pl-8 pr-7 py-2 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 w-56" />
+            <button v-if="searchQuery" @click="searchQuery = ''"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors leading-none">
+              ✕
+            </button>
+          </div>
+          <a href="#add"
+             class="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            + 添加投递
+          </a>
+        </div>
+      </div>
+
+      <!-- 状态统计 -->
+      <div v-if="applications.length > 0" class="flex flex-wrap gap-1.5 mb-4">
+        <button v-for="s in statusStats" :key="s.status"
+                @click="filterStatus = filterStatus === s.status ? '全部' : s.status"
+                :class="[statusBadgeClass(s.status), filterStatus === s.status ? 'ring-2 ring-offset-1 ring-blue-400' : 'opacity-60 hover:opacity-100']"
+                class="text-xs font-medium px-2.5 py-1 rounded-full transition-all cursor-pointer">
+          {{ s.status }} {{ s.count }}
+        </button>
+      </div>
+
+      <!-- 面试中：轮次子筛选 -->
+      <div v-if="filterStatus === '面试中'" class="flex items-center gap-2 mb-4 flex-wrap">
+        <span class="text-sm text-gray-500 shrink-0">面试轮次：</span>
+        <button v-for="r in ['全部', '一面', '二面', '三面', '四面+']" :key="r"
+                @click="filterRound = r"
+                :class="filterRound === r
+                  ? 'bg-yellow-400 text-white border-yellow-400'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-yellow-400 hover:text-yellow-700'"
+                class="text-sm px-3 py-1 rounded-full border transition-colors">
+          {{ r }}
+        </button>
+      </div>
+
+      <!-- 空状态 -->
+      <div v-if="filteredApplications.length === 0" class="bg-white rounded-xl border border-gray-200 p-16 text-center">
+        <div class="text-5xl mb-4">📭</div>
+        <p v-if="applications.length === 0" class="text-gray-500 mb-3">还没有投递记录</p>
+        <p v-else class="text-gray-500 mb-3">当前筛选条件下无记录</p>
+        <a v-if="applications.length === 0" href="#add"
+           class="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+          + 添加第一条投递
+        </a>
+        <button v-else @click="filterStatus = '全部'"
+                class="text-blue-500 hover:underline text-sm">清除筛选</button>
+      </div>
+
+      <!-- 卡片列表 -->
+      <div v-else class="space-y-3">
+        <div v-for="app in filteredApplications" :key="app.id"
+             class="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-sm transition-all p-5">
+          <div class="flex items-start justify-between gap-4">
+            <!-- 左侧信息 -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <span class="text-lg font-semibold text-gray-900 truncate">{{ app.companyName }}</span>
+
+                <!-- 可点击的状态徽章 -->
+                <div class="relative shrink-0">
+
+                  <button @click.stop="openBadgePicker(app)"
+                          :class="statusBadgeClass(app.status)"
+                          class="text-xs font-medium px-2 py-0.5 rounded-full hover:opacity-75 transition-opacity cursor-pointer">
+                    {{ app.status === '面试中' && app.interviewRound ? '面试中·' + app.interviewRound : app.status }}
+                  </button>
+
+                  <!-- 状态 + 轮次选择器 -->
+                  <div v-if="activeBadgePicker === app.id"
+                       class="absolute left-0 top-7 z-20 bg-white border border-gray-200 rounded-xl shadow-xl p-3 w-64"
+                       @click.stop>
+                    <p class="text-xs text-gray-400 mb-2">切换状态</p>
+                    <div class="flex flex-wrap gap-1.5 mb-1">
+                      <button v-for="s in allStatuses" :key="s"
+                              @click="selectStatus(app.id, s)"
+                              :class="[statusBadgeClass(s), pickerStatus === s ? 'ring-2 ring-blue-400 ring-offset-1' : 'opacity-60 hover:opacity-100']"
+                              class="text-xs font-medium px-2 py-0.5 rounded-full transition-all">
+                        {{ s }}
+                      </button>
+                    </div>
+
+                    <!-- 面试中：轮次选项 -->
+                    <div v-if="pickerStatus === '面试中'" class="border-t border-gray-100 mt-2 pt-2">
+                      <p class="text-xs text-gray-400 mb-2">选择轮次</p>
+                      <div class="flex flex-wrap gap-1 mb-2">
+                        <button v-for="r in roundPickerOptions" :key="r"
+                                @click="selectRound(app.id, r)"
+                                :class="app.interviewRound === r && app.status === '面试中'
+                                  ? 'bg-yellow-400 text-white border-yellow-400'
+                                  : 'bg-white text-gray-700 border-gray-300 hover:border-yellow-400 hover:text-yellow-700'"
+                                class="text-xs px-2.5 py-0.5 rounded-full border transition-colors">
+                          {{ r }}
+                        </button>
+                      </div>
+                      <div class="flex gap-1">
+                        <input v-model="customRoundInput"
+                               placeholder="自定义，如终面..."
+                               class="text-xs border border-gray-300 rounded px-2 py-1 flex-1 focus:outline-none focus:ring-1 focus:ring-yellow-400"
+                               @keydown.enter="submitCustomRound(app.id)" />
+                        <button @click="submitCustomRound(app.id)"
+                                class="text-xs bg-yellow-400 hover:bg-yellow-500 text-white px-2 py-1 rounded transition-colors">
+                          确认
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- 已 Offer：薪资录入 -->
+                    <div v-if="pickerStatus === '已 Offer'" class="border-t border-gray-100 mt-2 pt-2">
+                      <p class="text-xs text-gray-400 mb-2">录入 Offer 薪资</p>
+                      <button @click="selectOfferSalary(app.id, '待谈')"
+                              class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-full transition-colors mb-2">
+                        薪资待谈
+                      </button>
+                      <div class="flex gap-1">
+                        <input v-model="pickerOfferSalary" placeholder="如：25k×16…"
+                               class="text-xs border border-gray-300 rounded px-2 py-1 flex-1 focus:outline-none focus:ring-1 focus:ring-green-400"
+                               @keydown.enter="submitOfferSalary(app.id)" />
+                        <button @click="submitOfferSalary(app.id)"
+                                class="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded transition-colors">
+                          确认
+                        </button>
+                      </div>
+                      <button @click="selectOfferSalary(app.id, '')"
+                              class="text-xs text-gray-400 hover:text-gray-600 mt-1.5 block transition-colors">
+                        暂时跳过
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <!-- Offer 薪资 -->
+                <span v-if="app.status === '已 Offer' && app.offerSalary"
+                      class="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full shrink-0 font-medium">
+                  💰 {{ app.offerSalary }}
+                </span>
+              </div>
+              <p class="text-sm text-gray-600 mb-1">
+                {{ app.position }}<span v-if="app.workCity" class="text-gray-400"> · 📍{{ app.workCity }}</span>
+              </p>
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <p class="text-xs text-gray-400">投递日期：{{ app.applicationDate }}</p>
+                <span v-if="isStale(app)"
+                      class="text-xs text-orange-500 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-full shrink-0">
+                  ⏰ 7天未跟进
+                </span>
+              </div>
+              <!-- JD 预览 -->
+              <p v-if="app.jdRaw" class="text-xs text-gray-400 leading-relaxed break-all">
+                <span>{{ expandedCards[app.id] ? app.jdRaw : (app.jdRaw.length > 100 ? app.jdRaw.slice(0, 100) + '…' : app.jdRaw) }}</span>
+                <button v-if="app.jdRaw.length > 100" @click.stop="toggleCardExpand(app.id)"
+                        class="text-blue-400 hover:text-blue-600 ml-1 underline underline-offset-2">
+                  {{ expandedCards[app.id] ? '收起' : '展开' }}
+                </button>
+              </p>
+            </div>
+          </div>
+          <!-- 操作按钮 -->
+          <div class="flex items-center gap-2 mt-4 pt-4 border-t border-gray-100">
+            <a :href="'#detail/' + app.id"
+               class="flex-1 text-center text-sm font-medium text-blue-600 hover:bg-blue-50 py-1.5 rounded-lg transition-colors">
+              查看详情
+            </a>
+            <div class="w-px h-4 bg-gray-200"></div>
+            <a :href="'#review/' + app.id"
+               class="flex-1 text-center text-sm font-medium text-emerald-600 hover:bg-emerald-50 py-1.5 rounded-lg transition-colors">
+              面试前浏览
+            </a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 添加投递（占位） -->
+    <!-- 添加 / 编辑表单 -->
+    <div v-else-if="page === 'add' || page === 'edit'">
+      <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+          <a :href="page === 'edit' ? '#detail/' + routeId : '#list'"
+             class="text-gray-400 hover:text-gray-600 transition-colors">← 返回</a>
+          <h1 class="text-2xl font-bold text-gray-900">{{ page === 'edit' ? '编辑投递' : '添加投递' }}</h1>
+        </div>
+        <button v-if="page === 'edit'" @click="deleteApp"
+                class="text-sm text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition-colors">
+          删除记录
+        </button>
+      </div>
+
+      <div class="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+
+        <!-- 公司名 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">公司名 <span class="text-red-500">*</span></label>
+          <input v-model="form.companyName" type="text" placeholder="如：腾讯科技"
+                 :class="errors.companyName ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'"
+                 class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 transition-colors" />
+          <p v-if="errors.companyName" class="text-red-500 text-xs mt-1">{{ errors.companyName }}</p>
+        </div>
+
+        <!-- 岗位 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">岗位 <span class="text-red-500">*</span></label>
+          <input v-model="form.position" type="text" placeholder="如：前端工程师"
+                 :class="errors.position ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-blue-500'"
+                 class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 transition-colors" />
+          <p v-if="errors.position" class="text-red-500 text-xs mt-1">{{ errors.position }}</p>
+        </div>
+
+        <!-- 投递日期 + 状态 -->
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">投递日期</label>
+            <input v-model="form.applicationDate" type="date"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">状态</label>
+            <select v-model="form.status"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option v-for="s in allStatuses" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 工作城市 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">工作城市 <span class="text-gray-400 font-normal text-xs">（可选）</span></label>
+          <input v-model="form.workCity" type="text" placeholder="如：北京、上海、远程…"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+
+        <!-- 面试轮次（面试中时显示） -->
+        <div v-if="form.status === '面试中'">
+          <label class="block text-sm font-medium text-gray-700 mb-2">面试轮次</label>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button v-for="r in roundPickerOptions" :key="r" type="button"
+                    @click="form.interviewRound = r"
+                    :class="form.interviewRound === r
+                      ? 'bg-yellow-400 text-white border-yellow-400'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-yellow-400'"
+                    class="text-sm px-3 py-1 rounded-full border transition-colors">
+              {{ r }}
+            </button>
+            <input v-model="form.interviewRound" placeholder="自定义，如终面..."
+                   class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 flex-1 min-w-28" />
+          </div>
+        </div>
+
+        <!-- Offer 薪资（已 Offer 时显示） -->
+        <div v-if="form.status === '已 Offer'">
+          <label class="block text-sm font-medium text-gray-700 mb-1">Offer 薪资</label>
+          <input v-model="form.offerSalary" type="text" placeholder="如：25k×16、税前 40 万…"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+
+        <!-- 公司简介 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">公司简介</label>
+          <textarea v-model="form.companyBrief" rows="3"
+                    placeholder="简单描述公司背景、规模、业务方向..."
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+        </div>
+
+        <!-- 备注 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">备注</label>
+          <textarea v-model="form.notes" rows="3"
+                    placeholder="内推人、HR 联系方式、Offer 截止日期等…"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+        </div>
+
+        <!-- JD -->
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-sm font-medium text-gray-700">职位描述（JD）</label>
+            <div class="flex items-center gap-2">
+              <button type="button" @click="jdImageInputRef?.click()"
+                      :disabled="jdImageLoading || jdFormatLoading"
+                      class="text-xs text-gray-600 border border-gray-300 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                {{ jdImageLoading ? '识别中…' : '📷 上传截图' }}
+              </button>
+              <button type="button" @click="formatJDForm"
+                      :disabled="jdFormatLoading || jdImageLoading || !form.jdRaw.trim()"
+                      class="text-xs text-blue-600 border border-blue-200 hover:border-blue-400 hover:bg-blue-50 px-2 py-1 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                {{ jdFormatLoading ? 'AI 格式化中…' : (form.jdFormatted ? '重新 AI 格式化' : 'AI 格式化') }}
+              </button>
+            </div>
+          </div>
+          <input ref="jdImageInputRef" type="file" accept="image/*" class="hidden" @change="handleJDImage" />
+          <textarea v-model="form.jdRaw" rows="8"
+                    placeholder="粘贴完整 JD 原文，或点击「📷 上传截图」自动识别..."
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y font-mono"></textarea>
+          <p v-if="jdImageError" class="text-xs text-red-500 mt-1">{{ jdImageError }}</p>
+          <p v-if="jdFormatError" class="text-xs text-red-500 mt-1">{{ jdFormatError }}</p>
+          <!-- 格式化结果预览 -->
+          <div v-if="form.jdFormatted" class="mt-3 border border-green-200 rounded-lg p-4 bg-green-50">
+            <p class="text-xs text-green-600 font-medium mb-2">✓ 格式化完成，保存后可在详情页查看 Markdown 渲染效果</p>
+            <div class="prose text-xs max-h-48 overflow-y-auto" v-html="formJdHtml"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 操作按钮 -->
+      <div class="flex items-center justify-end gap-3 mt-6">
+        <a :href="page === 'edit' ? '#detail/' + routeId : '#list'"
+           class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg transition-colors">
+          取消
+        </a>
+        <button @click="saveApp"
+                class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-6 py-2 rounded-lg transition-colors">
+          保存
+        </button>
+      </div>
+    </div>
+
+    <!-- 公司详情 -->
+    <div v-else-if="page === 'detail'">
+      <!-- 找不到记录 -->
+      <div v-if="!currentApp" class="bg-white rounded-xl border border-gray-200 p-16 text-center text-gray-400">
+        <p class="text-lg mb-3">记录不存在</p>
+        <a href="#list" class="text-blue-500 hover:underline text-sm">返回列表</a>
+      </div>
+
+      <template v-else>
+        <!-- 顶部：标题 + 操作按钮 -->
+        <div class="flex items-start justify-between mb-6">
+          <div class="flex items-start gap-3">
+            <a href="#list" class="text-gray-400 hover:text-gray-600 transition-colors mt-1 shrink-0">← 返回</a>
+            <div>
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <h1 class="text-2xl font-bold text-gray-900">{{ currentApp.companyName }}</h1>
+                <!-- 可点击状态徽章 -->
+                <div class="relative shrink-0">
+                  <button @click.stop="openBadgePicker(currentApp)"
+                          :class="statusBadgeClass(currentApp.status)"
+                          class="text-xs font-medium px-2 py-0.5 rounded-full hover:opacity-75 cursor-pointer transition-opacity">
+                    {{ currentApp.status === '面试中' && currentApp.interviewRound ? '面试中·' + currentApp.interviewRound : currentApp.status }}
+                  </button>
+                  <!-- 状态 + 轮次 picker -->
+                  <div v-if="activeBadgePicker === currentApp.id"
+                       class="absolute left-0 top-7 z-20 bg-white border border-gray-200 rounded-xl shadow-xl p-3 w-64" @click.stop>
+                    <p class="text-xs text-gray-400 mb-2">切换状态</p>
+                    <div class="flex flex-wrap gap-1.5 mb-1">
+                      <button v-for="s in allStatuses" :key="s" @click="selectStatus(currentApp.id, s)"
+                              :class="[statusBadgeClass(s), pickerStatus === s ? 'ring-2 ring-blue-400 ring-offset-1' : 'opacity-60 hover:opacity-100']"
+                              class="text-xs font-medium px-2 py-0.5 rounded-full transition-all">{{ s }}</button>
+                    </div>
+                    <div v-if="pickerStatus === '面试中'" class="border-t border-gray-100 mt-2 pt-2">
+                      <p class="text-xs text-gray-400 mb-2">选择轮次</p>
+                      <div class="flex flex-wrap gap-1 mb-2">
+                        <button v-for="r in roundPickerOptions" :key="r" @click="selectRound(currentApp.id, r)"
+                                :class="currentApp.interviewRound === r && currentApp.status === '面试中'
+                                  ? 'bg-yellow-400 text-white border-yellow-400'
+                                  : 'bg-white text-gray-700 border-gray-300 hover:border-yellow-400'"
+                                class="text-xs px-2.5 py-0.5 rounded-full border transition-colors">{{ r }}</button>
+                      </div>
+                      <div class="flex gap-1">
+                        <input v-model="customRoundInput" placeholder="自定义，如终面..."
+                               class="text-xs border border-gray-300 rounded px-2 py-1 flex-1 focus:outline-none focus:ring-1 focus:ring-yellow-400"
+                               @keydown.enter="submitCustomRound(currentApp.id)" />
+                        <button @click="submitCustomRound(currentApp.id)"
+                                class="text-xs bg-yellow-400 hover:bg-yellow-500 text-white px-2 py-1 rounded transition-colors">确认</button>
+                      </div>
+                    </div>
+                    <!-- 已 Offer：薪资录入 -->
+                    <div v-if="pickerStatus === '已 Offer'" class="border-t border-gray-100 mt-2 pt-2">
+                      <p class="text-xs text-gray-400 mb-2">录入 Offer 薪资</p>
+                      <button @click="selectOfferSalary(currentApp.id, '待谈')"
+                              class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-full transition-colors mb-2">
+                        薪资待谈
+                      </button>
+                      <div class="flex gap-1">
+                        <input v-model="pickerOfferSalary" placeholder="如：25k×16…"
+                               class="text-xs border border-gray-300 rounded px-2 py-1 flex-1 focus:outline-none focus:ring-1 focus:ring-green-400"
+                               @keydown.enter="submitOfferSalary(currentApp.id)" />
+                        <button @click="submitOfferSalary(currentApp.id)"
+                                class="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded transition-colors">
+                          确认
+                        </button>
+                      </div>
+                      <button @click="selectOfferSalary(currentApp.id, '')"
+                              class="text-xs text-gray-400 hover:text-gray-600 mt-1.5 block transition-colors">
+                        暂时跳过
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <!-- Offer 薪资 -->
+                <span v-if="currentApp.status === '已 Offer' && currentApp.offerSalary"
+                      class="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full shrink-0 font-medium">
+                  💰 {{ currentApp.offerSalary }}
+                </span>
+              </div>
+              <p class="text-sm text-gray-500">
+                {{ currentApp.position }}
+                <span v-if="currentApp.workCity" class="text-gray-400"> · 📍{{ currentApp.workCity }}</span>
+                · 投递于 {{ currentApp.applicationDate }}
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0 mt-1">
+            <a :href="'#review/' + routeId"
+               class="text-sm text-emerald-600 hover:text-emerald-700 border border-emerald-200 hover:border-emerald-400 px-3 py-1.5 rounded-lg transition-colors">
+              面试前浏览
+            </a>
+            <a :href="'#edit/' + routeId"
+               class="text-sm text-blue-600 hover:text-blue-700 border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition-colors">
+              编辑
+            </a>
+          </div>
+        </div>
+
+        <!-- Tab 导航 -->
+        <div class="border-b border-gray-200 mb-6 flex">
+          <button @click="detailTab = 'info'"
+                  :class="detailTab === 'info' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'"
+                  class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px">
+            基本信息
+          </button>
+          <button @click="detailTab = 'interviews'"
+                  :class="detailTab === 'interviews' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'"
+                  class="px-4 py-2.5 text-sm font-medium transition-colors -mb-px">
+            面经
+            <span class="ml-1 text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">{{ currentApp.interviews.length }}</span>
+          </button>
+        </div>
+
+        <!-- 基本信息 Tab -->
+        <div v-if="detailTab === 'info'" class="space-y-4">
+          <!-- 公司简介 -->
+          <div v-if="currentApp.companyBrief" class="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">公司简介</h3>
+            <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.companyBrief }}</p>
+          </div>
+
+          <!-- 备注 -->
+          <div v-if="currentApp.notes" class="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">备注</h3>
+            <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.notes }}</p>
+          </div>
+
+          <!-- JD 区域 -->
+          <div class="bg-white rounded-xl border border-gray-200 p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-widest">职位描述（JD）</h3>
+              <button v-if="currentApp.jdRaw" @click="formatJD(currentApp.id)"
+                      :disabled="jdFormatLoading"
+                      class="text-xs text-blue-600 border border-blue-200 hover:border-blue-400 hover:bg-blue-50 px-2 py-1 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                {{ jdFormatLoading ? 'AI 格式化中…' : (currentApp.jdFormatted ? '重新 AI 格式化' : 'AI 格式化') }}
+              </button>
+            </div>
+            <!-- 已格式化的 Markdown -->
+            <div v-if="currentApp.jdFormatted" class="prose" v-html="jdHtml"></div>
+            <!-- 原始文本 -->
+            <div v-else-if="currentApp.jdRaw">
+              <pre class="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{{ currentApp.jdRaw }}</pre>
+            </div>
+            <!-- 无内容 -->
+            <p v-else class="text-sm text-gray-400">暂无 JD，点击右上角「编辑」添加。</p>
+            <p v-if="jdFormatError" class="text-xs text-red-500 mt-2">{{ jdFormatError }}</p>
+          </div>
+
+          <!-- AI 面试建议 -->
+          <div class="bg-white rounded-xl border border-gray-200 p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-widest">AI 面试建议</h3>
+              <button @click="analyzeWithAI(currentApp.id)"
+                      :disabled="aiAnalysisLoading || !currentApp.jdFormatted || !settings.resumeText"
+                      :title="!currentApp.jdFormatted ? '请先格式化 JD' : (!settings.resumeText ? '请先在设置页上传简历' : '')"
+                      class="text-xs text-purple-600 border border-purple-200 hover:border-purple-400 hover:bg-purple-50 px-2 py-1 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                {{ aiAnalysisLoading ? 'AI 分析中…' : (currentApp.aiAnalysis ? '重新分析' : 'AI 分析') }}
+              </button>
+            </div>
+            <p v-if="!currentApp.jdFormatted" class="text-sm text-gray-400">
+              请先对 JD 进行 AI 格式化，然后再生成面试建议。
+            </p>
+            <p v-else-if="!settings.resumeText" class="text-sm text-gray-400">
+              请先在 <a href="#settings" class="text-blue-500 hover:underline">设置页</a> 上传简历，然后再生成面试建议。
+            </p>
+            <div v-else-if="currentApp.aiAnalysis" class="prose" v-html="aiAnalysisHtml"></div>
+            <p v-else class="text-sm text-gray-400">点击右上角「AI 分析」生成面试建议报告。</p>
+            <p v-if="aiAnalysisError" class="text-xs text-red-500 mt-2">{{ aiAnalysisError }}</p>
+          </div>
+        </div>
+
+        <!-- 面经 Tab -->
+        <div v-else>
+
+          <!-- 顶部操作栏 -->
+          <div class="flex items-center justify-between mb-4">
+            <span class="text-sm text-gray-500">共 {{ currentApp.interviews.length }} 场面试记录</span>
+            <div class="flex items-center gap-2">
+              <button v-if="currentApp.interviews.length > 0" @click="exportInterviews(currentApp)"
+                      class="text-sm text-gray-600 border border-gray-300 hover:border-gray-400 hover:bg-gray-50 px-3 py-2 rounded-lg transition-colors">
+                导出面经
+              </button>
+              <button v-if="!interviewFormOpen" @click="openAddInterview"
+                      class="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                + 添加面试记录
+              </button>
+            </div>
+          </div>
+
+          <!-- 面试记录表单（内联） -->
+          <div v-if="interviewFormOpen"
+               class="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5 space-y-4">
+            <h3 class="text-base font-semibold text-gray-800">
+              {{ editingInterviewId ? '编辑面试记录' : '添加面试记录' }}
+            </h3>
+
+            <!-- 日期 + 轮次 -->
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">面试日期</label>
+                <input v-model="iForm.date" type="date"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">轮次</label>
+                <div class="flex flex-wrap gap-1">
+                  <button v-for="r in interviewRounds" :key="r" type="button"
+                          @click="iForm.round = r"
+                          :class="iForm.round === r
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'"
+                          class="text-xs px-2.5 py-1 rounded-full border transition-colors">
+                    {{ r }}
+                  </button>
+                  <input v-model="iForm.round" placeholder="自定义..."
+                         class="text-xs border border-gray-300 rounded-lg px-2 py-1 w-20 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 备注 -->
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">本场备注（可选）</label>
+              <textarea v-model="iForm.notes" rows="2" placeholder="整体感受、面试官风格、特殊情况..."
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-white"></textarea>
+            </div>
+
+            <!-- 题目列表 -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs font-medium text-gray-600">题目列表</label>
+                <button type="button" @click="addQuestion"
+                        class="text-xs text-blue-600 hover:text-blue-800 border border-blue-300 hover:border-blue-500 px-2 py-0.5 rounded transition-colors">
+                  + 添加题目
+                </button>
+              </div>
+              <div v-if="iForm.questions.length === 0" class="text-xs text-gray-400 text-center py-4 border border-dashed border-gray-300 rounded-lg">
+                还没有题目，点击「添加题目」开始记录
+              </div>
+              <div v-for="(q, idx) in iForm.questions" :key="q.id" class="mb-3 bg-white rounded-lg border border-gray-200 p-3">
+                <div class="flex items-center justify-between mb-1.5">
+                  <span class="text-xs font-medium text-gray-500">第 {{ idx + 1 }} 题</span>
+                  <button type="button" @click="removeQuestion(idx)"
+                          class="text-xs text-red-400 hover:text-red-600 transition-colors">删除</button>
+                </div>
+                <textarea v-model="q.question" rows="2" placeholder="面试题目..."
+                          class="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none mb-2"></textarea>
+                <label class="block text-xs text-gray-400 mb-1">我的回答</label>
+                <textarea v-model="q.answer" rows="3" placeholder="当时的回答..."
+                          class="w-full border border-blue-100 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none text-gray-700 mb-2"></textarea>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-xs text-gray-400">参考答案</label>
+                  <button type="button" @click="generateRefAnswer(q)"
+                          :disabled="aiRefLoadingMap[q.id] || !q.question.trim()"
+                          :title="!q.question.trim() ? '请先填写题目' : ''"
+                          class="text-xs text-green-600 border border-green-200 hover:border-green-400 hover:bg-green-50 px-2 py-0.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    {{ aiRefLoadingMap[q.id] ? 'AI 生成中…' : (q.refAnswer ? '重新生成' : 'AI 生成答案') }}
+                  </button>
+                </div>
+                <textarea v-model="q.refAnswer" rows="6" placeholder="事后整理的参考答案或更好的表达，也可点击右上角让 AI 生成…"
+                          class="w-full border border-green-100 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-green-400 resize-y text-gray-700"></textarea>
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="flex items-center justify-between pt-2">
+              <button v-if="editingInterviewId" @click="deleteInterview(editingInterviewId)"
+                      class="text-sm text-red-500 hover:text-red-700 transition-colors">
+                删除此记录
+              </button>
+              <div v-else></div>
+              <div class="flex gap-2">
+                <button type="button" @click="cancelInterview"
+                        class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg transition-colors">
+                  取消
+                </button>
+                <button type="button" @click="saveInterview"
+                        class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面经卡片列表 -->
+          <div v-if="sortedInterviews.length === 0 && !interviewFormOpen"
+               class="bg-white rounded-xl border border-gray-200 p-16 text-center text-gray-400">
+            <div class="text-4xl mb-3">📝</div>
+            <p class="text-sm">还没有面经记录，点击「添加面试记录」开始</p>
+          </div>
+
+          <div v-for="interview in sortedInterviews" :key="interview.id"
+               class="bg-white rounded-xl border border-gray-200 mb-3 overflow-hidden">
+            <!-- 卡片头 -->
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div class="flex items-center gap-3">
+                <span class="text-sm font-semibold text-gray-800">{{ interview.date }}</span>
+                <span v-if="interview.round"
+                      class="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                  {{ interview.round }}
+                </span>
+                <span class="text-xs text-gray-400">{{ interview.questions.length }} 道题</span>
+              </div>
+              <button @click="openEditInterview(interview)"
+                      class="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 px-2.5 py-1 rounded-lg transition-colors">
+                编辑
+              </button>
+            </div>
+            <!-- 备注 -->
+            <p v-if="interview.notes" class="px-5 pt-3 text-xs text-gray-500 italic">{{ interview.notes }}</p>
+            <!-- 题目列表 -->
+            <div class="px-5 py-3 space-y-4">
+              <div v-if="interview.questions.length === 0" class="text-xs text-gray-400">暂无题目记录</div>
+              <div v-for="(q, idx) in interview.questions" :key="q.id" class="space-y-1.5">
+                <p class="text-xs font-semibold text-gray-700">Q{{ idx + 1 }}. {{ q.question || '（未填写题目）' }}</p>
+                <div v-if="q.answer" class="pl-3 border-l-2 border-blue-200">
+                  <span class="text-xs text-blue-400 font-medium">我的回答</span>
+                  <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap mt-0.5">{{ q.answer }}</p>
+                </div>
+                <div v-if="q.refAnswer" class="pl-3 border-l-2 border-green-200">
+                  <span class="text-xs text-green-500 font-medium">参考答案</span>
+                  <div class="prose prose-sm mt-0.5" v-html="renderMd(q.refAnswer)"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </template>
+    </div>
+
+    <!-- 面试前浏览 -->
+    <div v-else-if="page === 'review'">
+      <template v-if="currentApp">
+        <!-- 顶部导航 -->
+        <div class="flex items-center justify-between mb-5">
+          <a :href="'#detail/' + routeId" class="text-sm text-gray-400 hover:text-gray-600 transition-colors">← 返回详情</a>
+          <button @click="toggleSelfTest"
+                  :class="selfTestMode
+                    ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-amber-400 hover:text-amber-600'"
+                  class="text-sm border px-3 py-1.5 rounded-lg transition-colors">
+            {{ selfTestMode ? '✓ 自测中 — 点击退出' : '自测模式' }}
+          </button>
+        </div>
+        <!-- 公司 & 岗位头部 -->
+        <div class="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h1 class="text-2xl font-bold text-gray-900">{{ currentApp.companyName }}</h1>
+              <p class="text-base text-gray-500 mt-1">
+                {{ currentApp.position }}
+                <span v-if="currentApp.workCity" class="text-gray-400"> · 📍{{ currentApp.workCity }}</span>
+              </p>
+              <p class="text-xs text-gray-400 mt-1">投递日期：{{ currentApp.applicationDate }}</p>
+            </div>
+            <span :class="statusBadgeClass(currentApp.status)"
+                  class="shrink-0 text-sm font-medium px-3 py-1 rounded-full mt-1">
+              {{ currentApp.status }}{{ currentApp.interviewRound ? ' · ' + currentApp.interviewRound : '' }}
+            </span>
+          </div>
+        </div>
+
+        <div class="space-y-5">
+          <!-- 公司简介 -->
+          <div v-if="currentApp.companyBrief" class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">公司简介</h2>
+            <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.companyBrief }}</p>
+          </div>
+
+          <!-- JD -->
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">职位描述（JD）</h2>
+            <div v-if="currentApp.jdFormatted" class="prose" v-html="jdHtml"></div>
+            <pre v-else-if="currentApp.jdRaw" class="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{{ currentApp.jdRaw }}</pre>
+            <p v-else class="text-sm text-gray-400">暂无 JD 内容。</p>
+          </div>
+
+          <!-- AI 面试建议 -->
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">AI 面试建议</h2>
+            <div v-if="currentApp.aiAnalysis" class="prose" v-html="aiAnalysisHtml"></div>
+            <p v-else class="text-sm text-gray-400">尚未生成 AI 面试建议，请在详情页点击「AI 分析」。</p>
+          </div>
+
+          <!-- 面经记录 -->
+          <div class="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">面经记录</h2>
+            <div v-if="sortedInterviews.length === 0" class="text-sm text-gray-400">暂无面经记录。</div>
+            <div v-for="(interview, iIdx) in sortedInterviews" :key="interview.id"
+                 :class="iIdx > 0 ? 'mt-7 pt-7 border-t border-gray-100' : ''">
+              <div class="flex items-center gap-3 mb-3">
+                <span class="text-sm font-semibold text-gray-800">{{ interview.date }}</span>
+                <span v-if="interview.round"
+                      class="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                  {{ interview.round }}
+                </span>
+                <span class="text-xs text-gray-400">{{ interview.questions.length }} 道题</span>
+              </div>
+              <p v-if="interview.notes" class="text-xs text-gray-500 italic mb-4">{{ interview.notes }}</p>
+              <div class="space-y-5">
+                <div v-if="interview.questions.length === 0" class="text-xs text-gray-400">本场暂无题目记录</div>
+                <div v-for="(q, qIdx) in interview.questions" :key="q.id">
+                  <p class="text-sm font-semibold text-gray-800 mb-2">Q{{ qIdx + 1 }}. {{ q.question || '（未填写题目）' }}</p>
+                  <div v-if="q.answer" class="pl-4 border-l-2 border-blue-200 mb-2">
+                    <p class="text-xs text-blue-400 font-medium mb-1">我的回答</p>
+                    <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{{ q.answer }}</p>
+                  </div>
+                  <div v-if="q.refAnswer" class="pl-4 border-l-2 border-green-200">
+                    <template v-if="!selfTestMode || revealedAnswers[q.id]">
+                      <p class="text-xs text-green-500 font-medium mb-1">参考答案</p>
+                      <div class="prose prose-sm" v-html="renderMd(q.refAnswer)"></div>
+                    </template>
+                    <button v-else @click="revealAnswer(q.id)"
+                            class="text-xs text-green-600 border border-green-200 hover:bg-green-50 px-2 py-1 rounded transition-colors">
+                      显示参考答案
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+      <!-- 找不到记录 -->
+      <div v-else class="bg-white rounded-xl border border-gray-200 p-16 text-center text-gray-400">
+        <div class="text-5xl mb-4">🔍</div>
+        <p class="text-base mb-3">找不到该投递记录</p>
+        <a href="#list" class="text-blue-500 hover:underline text-sm">返回列表</a>
+      </div>
+    </div>
+
+    <!-- 设置页 -->
+    <div v-else-if="page === 'settings'">
+      <h1 class="text-2xl font-bold text-gray-900 mb-6">设置</h1>
+
+      <!-- AI 接口配置 -->
+      <div class="bg-white rounded-xl border border-gray-200 p-6 mb-4 space-y-5">
+        <h2 class="text-base font-semibold text-gray-800">AI 接口配置</h2>
+        <p class="text-sm text-gray-500 -mt-3">Key 仅存储在本地浏览器，不会上传任何服务器。配置任意一个即可使用 AI 功能；同时配置时，文本任务优先用 DeepSeek，图片识别优先用千问。</p>
+
+        <!-- DeepSeek -->
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <label class="text-sm font-medium text-gray-700">DeepSeek API Key</label>
+            <span class="text-xs text-gray-400">文本：JD 格式化、面试建议</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input v-model="settings.deepseekApiKey" type="password" placeholder="sk-..."
+                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <span v-if="settings.deepseekApiKey"
+                  class="shrink-0 text-xs text-green-600 bg-green-50 border border-green-200 px-2.5 py-1.5 rounded-lg">
+              ✓ 已保存
+            </span>
+            <button v-if="settings.deepseekApiKey" @click="settings.deepseekApiKey = ''"
+                    class="shrink-0 text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 px-2.5 py-1.5 rounded-lg transition-colors">
+              清除
+            </button>
+          </div>
+        </div>
+
+        <!-- 千问 -->
+        <div>
+          <div class="flex items-center gap-2 mb-1">
+            <label class="text-sm font-medium text-gray-700">千问（通义）API Key</label>
+            <span class="text-xs text-gray-400">图片：JD 截图识别（qwen-vl-plus）</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input v-model="settings.qwenApiKey" type="password" placeholder="sk-..."
+                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <span v-if="settings.qwenApiKey"
+                  class="shrink-0 text-xs text-green-600 bg-green-50 border border-green-200 px-2.5 py-1.5 rounded-lg">
+              ✓ 已保存
+            </span>
+            <button v-if="settings.qwenApiKey" @click="settings.qwenApiKey = ''"
+                    class="shrink-0 text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 px-2.5 py-1.5 rounded-lg transition-colors">
+              清除
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 简历 -->
+      <div class="bg-white rounded-xl border border-gray-200 p-6 mb-4">
+        <h2 class="text-base font-semibold text-gray-800 mb-1">我的简历</h2>
+        <p class="text-sm text-gray-500 mb-4">上传后 AI 可结合简历与 JD 给出个性化面试建议。支持 PDF、.docx。</p>
+
+        <!-- 已上传文件名 -->
+        <div v-if="settings.resumeFileName" class="flex items-center gap-3 mb-3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+          <span class="text-sm text-gray-700 flex-1 truncate">📄 {{ settings.resumeFileName }}</span>
+          <button @click="clearResume" class="text-xs text-red-500 hover:text-red-700 transition-colors shrink-0">删除</button>
+        </div>
+
+        <!-- 文字预览 -->
+        <div v-if="settings.resumeText && !showManualPaste" class="mb-3">
+          <p class="text-xs text-gray-400 mb-1">提取内容预览（前 200 字）</p>
+          <p class="text-xs text-gray-600 bg-gray-50 border border-gray-200 p-3 rounded-lg leading-relaxed">
+            {{ settings.resumeText.slice(0, 200) }}{{ settings.resumeText.length > 200 ? '…' : '' }}
+          </p>
+        </div>
+
+        <!-- 上传按钮 -->
+        <div class="flex items-center gap-3 mb-2">
+          <button @click="resumeInputRef?.click()" :disabled="resumeLoading"
+                  class="inline-flex items-center gap-2 border border-gray-300 hover:border-blue-400 text-gray-700 hover:text-blue-600 text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            {{ resumeLoading ? '提取中…' : (settings.resumeFileName ? '重新上传' : '上传简历') }}
+          </button>
+          <span class="text-xs text-gray-400">PDF / .docx</span>
+        </div>
+        <input ref="resumeInputRef" type="file" accept=".pdf,.docx" class="hidden" @change="handleResumeFile" />
+
+        <!-- 错误提示 + 手动粘贴降级 -->
+        <div v-if="resumeError" class="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p class="text-xs text-red-600 mb-1">{{ resumeError }}</p>
+          <p v-if="showManualPaste" class="text-xs text-gray-500 mb-2">请手动粘贴简历文本：</p>
+          <textarea v-if="showManualPaste" v-model="settings.resumeText" rows="6"
+                    placeholder="粘贴简历纯文本内容..."
+                    class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"></textarea>
+        </div>
+      </div>
+
+      <!-- 自定义状态 -->
+      <div class="bg-white rounded-xl border border-gray-200 p-6 mb-4">
+        <h2 class="text-base font-semibold text-gray-800 mb-1">自定义状态</h2>
+        <p class="text-sm text-gray-500 mb-4">在预设状态之外添加自定义标签，会出现在状态选择列表末尾。</p>
+        <div class="flex flex-wrap gap-2 mb-4 min-h-6">
+          <span v-for="s in settings.customStatuses" :key="s"
+                class="inline-flex items-center gap-1 bg-purple-100 text-purple-700 text-xs font-medium px-2.5 py-1 rounded-full">
+            {{ s }}
+            <button @click="removeCustomStatus(s)" class="hover:text-purple-900 transition-colors leading-none">✕</button>
+          </span>
+          <span v-if="!settings.customStatuses?.length" class="text-xs text-gray-400 self-center">暂无自定义状态</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <input v-model="newCustomStatus" type="text" placeholder="输入新状态名称，回车添加"
+                 class="flex-1 max-w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 @keydown.enter="addCustomStatus" />
+          <button @click="addCustomStatus"
+                  class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            添加
+          </button>
+        </div>
+      </div>
+
+      <!-- 数据备份 -->
+      <div class="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 class="text-base font-semibold text-gray-800 mb-1">数据备份</h2>
+        <p class="text-sm text-gray-500 mb-4">数据存储在本地浏览器，建议定期导出备份，换设备时导入恢复。</p>
+        <div class="flex items-center gap-3">
+          <button @click="exportData"
+                  class="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            导出 JSON
+          </button>
+          <button @click="triggerImport"
+                  class="inline-flex items-center gap-2 border border-gray-300 hover:border-blue-400 text-gray-700 hover:text-blue-600 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+            导入 JSON
+          </button>
+          <span class="text-sm text-gray-400">共 {{ applications.length }} 条记录</span>
+        </div>
+        <input ref="importInputRef" type="file" accept=".json" class="hidden" @change="handleImportFile" />
+      </div>
+    </div>
+
+    <!-- 404 -->
+    <div v-else>
+      <div class="bg-white rounded-xl border border-gray-200 p-16 text-center text-gray-400">
+        <div class="text-5xl mb-4">🔍</div>
+        <p class="text-base mb-3">页面不存在</p>
+        <a href="#list" class="text-blue-500 hover:underline text-sm">返回列表</a>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ══════════════════════════════════════════
+//  常量
+// ══════════════════════════════════════════
+const PRESET_STATUSES = ['待投递', '已投递待回复', '待笔试', '笔试完待通知', '面试中', '已 Offer', '已挂'];
+
+const ROUND_OPTIONS = ['一面', '二面', '三面', '四面+'];
+const ROUND_PICKER_OPTIONS = ['一面', '二面', '三面', '四面', '五面', '六面'];
+const INTERVIEW_ROUNDS    = ['一面', '二面', '三面', '四面', '五面', '六面', 'HR面'];
+
+const STATUS_BADGE = {
+  '待投递':      'bg-gray-100 text-gray-600',
+  '已投递待回复': 'bg-blue-100 text-blue-700',
+  '待笔试':      'bg-orange-100 text-orange-700',
+  '笔试完待通知': 'bg-indigo-100 text-indigo-700',
+  '面试中':      'bg-yellow-100 text-yellow-800',
+  '已 Offer':    'bg-green-100 text-green-700',
+  '已挂':        'bg-red-100 text-red-600',
+};
+
+function statusBadgeClass(status) {
+  return STATUS_BADGE[status] || 'bg-purple-100 text-purple-700';
+}
+
+// ══════════════════════════════════════════
+//  数据层 — localStorage 读写（纯函数）
+// ══════════════════════════════════════════
+const STORAGE = {
+  APPS: 'jobtracker_applications',
+  SETTINGS: 'jobtracker_settings',
+};
+
+const SETTINGS_DEFAULTS = {
+  deepseekApiKey: '',
+  qwenApiKey: '',
+  resumeText: '',
+  resumeFileName: '',
+  customStatuses: [],
+};
+
+function loadApplications() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE.APPS) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveApplications(apps) {
+  localStorage.setItem(STORAGE.APPS, JSON.stringify(apps));
+}
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE.SETTINGS) || '{}');
+    return { ...SETTINGS_DEFAULTS, ...saved };
+  } catch {
+    return { ...SETTINGS_DEFAULTS };
+  }
+}
+
+function saveSettings(s) {
+  localStorage.setItem(STORAGE.SETTINGS, JSON.stringify(s));
+}
+
+// PDF.js worker
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+async function extractPdfText(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  const parts = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    parts.push(content.items.map(it => it.str).join(''));
+  }
+  return parts.join('\n').trim();
+}
+
+async function extractDocxText(file) {
+  const buf = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer: buf });
+  return result.value.trim();
+}
+
+// DeepSeek API 调用
+async function callDeepSeek(settings, systemPrompt, userContent) {
+  const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${settings.deepseekApiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+      max_tokens: 2000,
+      temperature: 0.3,
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `API 错误 ${resp.status}`);
+  }
+  const data = await resp.json();
+  return data.choices[0].message.content.trim();
+}
+
+// 文本任务：DeepSeek 优先，无 DeepSeek Key 时降级千问
+async function callTextAI(settings, systemPrompt, userContent) {
+  if (settings.deepseekApiKey) {
+    return callDeepSeek(settings, systemPrompt, userContent);
+  }
+  if (settings.qwenApiKey) {
+    const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.qwenApiKey}` },
+      body: JSON.stringify({
+        model: 'qwen-plus',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: userContent  },
+        ],
+        max_tokens: 2000,
+      }),
+    });
+    if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.error?.message || `API 错误 ${resp.status}`); }
+    const data = await resp.json();
+    return data.choices[0].message.content.trim();
+  }
+  throw new Error('请先在设置页配置 DeepSeek 或千问 API Key');
+}
+
+const JD_FORMAT_PROMPT = '你是职位描述整理助手，输出纯 Markdown，不加额外说明文字。';
+const JD_FORMAT_USER   = (jd) =>
+  `将下面的职位描述整理为结构化 Markdown，包含以下段落（如原文有对应内容）：职位概述、岗位职责、任职要求、加分项、薪资福利。保持原文关键信息，精简冗余措辞。\n\n---\n${jd}`;
+
+// 从 API 响应里解析纯文本（兼容字符串和千问 VL 的数组格式）
+function parseContentText(raw) {
+  if (typeof raw === 'string') return raw.trim();
+  if (Array.isArray(raw)) return (raw.find(c => c.type === 'text')?.text || '').trim();
+  return String(raw ?? '').trim();
+}
+
+// 解析非 2xx 响应体里的错误信息
+async function parseApiError(resp) {
+  const body = await resp.text();
+  try {
+    const e = JSON.parse(body);
+    return e.error?.message || e.message || body || `API 错误 ${resp.status}`;
+  } catch {
+    return body || `API 错误 ${resp.status}`;
+  }
+}
+
+// 千问 API 有时以 200 返回认证错误，内容本身就是错误文字，需检测并抛出
+function assertNotApiError(text) {
+  if (/authentication\s*fail|invalid.*api.?key|api.?key.*invalid/i.test(text)) {
+    throw new Error(text);
+  }
+}
+
+// 图片识别：千问优先（视觉能力更强），无千问 Key 时降级 DeepSeek
+async function extractJDFromImage(settings, base64, mimeType) {
+  const visionPrompt = '请完整提取图片中的职位描述文字，保持原文内容，不要添加任何解释或额外内容。';
+  const imageContent = [
+    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+    { type: 'text', text: visionPrompt },
+  ];
+  if (settings.qwenApiKey) {
+    const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.qwenApiKey}` },
+      body: JSON.stringify({
+        model: 'qwen-vl-plus',
+        messages: [{ role: 'user', content: imageContent }],
+        max_tokens: 3000,
+      }),
+    });
+    if (!resp.ok) throw new Error(await parseApiError(resp));
+    const data = await resp.json();
+    const text = parseContentText(data.choices[0].message.content);
+    assertNotApiError(text);
+    return text;
+  }
+  if (settings.deepseekApiKey) {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.deepseekApiKey}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: imageContent }],
+        max_tokens: 3000,
+      }),
+    });
+    if (!resp.ok) throw new Error(await parseApiError(resp));
+    const data = await resp.json();
+    const text = parseContentText(data.choices[0].message.content);
+    assertNotApiError(text);
+    return text;
+  }
+  throw new Error('请先在设置页配置千问或 DeepSeek API Key');
+}
+
+// ══════════════════════════════════════════
+//  Vue App
+// ══════════════════════════════════════════
+const { createApp, ref, reactive, computed, watch, onMounted } = Vue;
+
+createApp({
+  setup() {
+    // ── 路由状态 ──
+    const page = ref('list');
+    const routeId = ref('');
+
+    function parseRoute() {
+      const hash = window.location.hash.replace(/^#\/?/, '') || 'list';
+      const [p, id = ''] = hash.split('/');
+      const valid = ['list', 'add', 'edit', 'detail', 'review', 'settings'];
+      page.value = valid.includes(p) ? p : 'notfound';
+      routeId.value = id;
+    }
+
+    function navClass(pages) {
+      const active = pages.includes(page.value);
+      return [
+        'text-sm font-medium px-3 py-1.5 rounded-md transition-colors',
+        active
+          ? 'bg-blue-50 text-blue-600'
+          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+      ];
+    }
+
+    // ── 数据状态 ──
+    const applications = ref(loadApplications());
+    const settings = ref(loadSettings());
+
+    // 自动持久化
+    watch(applications, (val) => saveApplications(val), { deep: true });
+    watch(settings, (val) => saveSettings(val), { deep: true });
+
+    // ── 导出 ──
+    function exportData() {
+      const date = new Date().toISOString().slice(0, 10);
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        applications: applications.value,
+        // API Key 不随备份导出
+        settings: { ...settings.value, deepseekApiKey: '', qwenApiKey: '' },
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jobtracker-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ── 导入 ──
+    const importInputRef = ref(null);
+
+    function triggerImport() {
+      importInputRef.value?.click();
+    }
+
+    function handleImportFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!Array.isArray(data.applications)) throw new Error('JSON 格式不正确，缺少 applications 字段');
+          const count = data.applications.length;
+          if (!confirm(`确认导入？当前数据将被覆盖（文件含 ${count} 条投递记录）`)) return;
+          applications.value = data.applications;
+          if (data.settings) {
+            // 两个 API Key 均保留本地值，不随备份覆盖
+            const dsKey = settings.value.deepseekApiKey;
+            const qwKey = settings.value.qwenApiKey;
+            settings.value = { ...SETTINGS_DEFAULTS, ...data.settings, deepseekApiKey: dsKey, qwenApiKey: qwKey };
+          }
+          alert(`导入成功，共 ${count} 条记录`);
+        } catch (err) {
+          alert('导入失败：' + err.message);
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    // ── 状态 / 轮次 / 搜索筛选 ──
+    const filterStatus = ref('全部');
+    const filterRound = ref('全部');
+    const searchQuery = ref('');
+
+    watch(filterStatus, (val) => {
+      if (val !== '面试中') filterRound.value = '全部';
+    });
+
+    const allStatuses = computed(() =>
+      [...PRESET_STATUSES, ...(settings.value.customStatuses || [])]
+    );
+
+    const filteredApplications = computed(() => {
+      let list = applications.value;
+      if (searchQuery.value.trim()) {
+        const q = searchQuery.value.trim().toLowerCase();
+        list = list.filter(a =>
+          a.companyName.toLowerCase().includes(q) ||
+          a.position.toLowerCase().includes(q) ||
+          (a.workCity || '').toLowerCase().includes(q)
+        );
+      }
+      if (filterStatus.value !== '全部') {
+        list = list.filter(a => a.status === filterStatus.value);
+      }
+      if (filterStatus.value === '面试中' && filterRound.value !== '全部') {
+        if (filterRound.value === '四面+') {
+          list = list.filter(a => a.interviewRound && !['一面', '二面', '三面'].includes(a.interviewRound));
+        } else {
+          list = list.filter(a => a.interviewRound === filterRound.value);
+        }
+      }
+      return [...list].sort((a, b) => b.applicationDate.localeCompare(a.applicationDate));
+    });
+
+    // ── 徽章点击 picker（状态 + 轮次一体） ──
+    const activeBadgePicker = ref(null);
+    const pickerStatus = ref('');
+    const customRoundInput = ref('');
+
+    function openBadgePicker(app) {
+      if (activeBadgePicker.value === app.id) { closeBadgePicker(); return; }
+      activeBadgePicker.value = app.id;
+      pickerStatus.value = app.status;
+      customRoundInput.value = '';
+    }
+
+    const pickerOfferSalary = ref('');
+
+    function closeBadgePicker() {
+      activeBadgePicker.value = null;
+      pickerStatus.value = '';
+      customRoundInput.value = '';
+      pickerOfferSalary.value = '';
+    }
+
+    function selectStatus(appId, status) {
+      pickerStatus.value = status;
+      if (status !== '面试中' && status !== '已 Offer') {
+        const app = applications.value.find(a => a.id === appId);
+        if (app) { app.status = status; app.updatedAt = new Date().toISOString(); }
+        closeBadgePicker();
+      }
+      if (status === '已 Offer') pickerOfferSalary.value = '';
+      // 面试中：等待选轮次；已 Offer：等待输入薪资
+    }
+
+    function selectOfferSalary(appId, salary) {
+      const app = applications.value.find(a => a.id === appId);
+      if (app) { app.status = '已 Offer'; app.offerSalary = salary; app.updatedAt = new Date().toISOString(); }
+      closeBadgePicker();
+    }
+
+    function submitOfferSalary(appId) {
+      selectOfferSalary(appId, pickerOfferSalary.value.trim());
+    }
+
+    function selectRound(appId, round) {
+      const app = applications.value.find(a => a.id === appId);
+      if (app) {
+        app.status = '面试中';
+        app.interviewRound = round.trim();
+        app.updatedAt = new Date().toISOString();
+      }
+      closeBadgePicker();
+    }
+
+    function submitCustomRound(appId) {
+      if (customRoundInput.value.trim()) selectRound(appId, customRoundInput.value);
+    }
+
+    // ── 设置页：简历上传 ──
+    const resumeInputRef = ref(null);
+    const resumeLoading  = ref(false);
+    const resumeError    = ref('');
+    const showManualPaste = ref(false);
+
+    async function handleResumeFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['pdf', 'docx'].includes(ext)) {
+        resumeError.value = '仅支持 PDF 和 .docx 格式';
+        return;
+      }
+      resumeLoading.value  = true;
+      resumeError.value    = '';
+      showManualPaste.value = false;
+      try {
+        const text = ext === 'pdf' ? await extractPdfText(file) : await extractDocxText(file);
+        if (!text) throw new Error('未能提取到文字（PDF 可能是扫描件，请手动粘贴）');
+        settings.value.resumeText     = text;
+        settings.value.resumeFileName = file.name;
+      } catch (err) {
+        resumeError.value     = err.message || '提取失败，请手动粘贴简历文本';
+        showManualPaste.value = true;
+        settings.value.resumeFileName = file.name;
+      } finally {
+        resumeLoading.value  = false;
+        event.target.value   = '';
+      }
+    }
+
+    function clearResume() {
+      settings.value.resumeText     = '';
+      settings.value.resumeFileName = '';
+      resumeError.value    = '';
+      showManualPaste.value = false;
+    }
+
+    // ── 设置页：自定义状态 ──
+    const newCustomStatus = ref('');
+
+    function addCustomStatus() {
+      const s = newCustomStatus.value.trim();
+      if (!s) return;
+      if (!settings.value.customStatuses) settings.value.customStatuses = [];
+      if (settings.value.customStatuses.includes(s)) return;
+      settings.value.customStatuses.push(s);
+      newCustomStatus.value = '';
+    }
+
+    function removeCustomStatus(s) {
+      settings.value.customStatuses = settings.value.customStatuses.filter(x => x !== s);
+    }
+
+    // ── 面经 ──
+    const sortedInterviews = computed(() =>
+      currentApp.value
+        ? [...currentApp.value.interviews].sort((a, b) => b.date.localeCompare(a.date))
+        : []
+    );
+
+    const interviewFormOpen = ref(false);
+    const editingInterviewId = ref(null);
+
+    const iForm = reactive({
+      date: '', round: '', notes: '', questions: [],
+    });
+
+    function openAddInterview() {
+      Object.assign(iForm, { date: new Date().toISOString().slice(0, 10), round: '', notes: '', questions: [] });
+      editingInterviewId.value = null;
+      interviewFormOpen.value = true;
+    }
+
+    function openEditInterview(interview) {
+      Object.assign(iForm, {
+        date: interview.date, round: interview.round, notes: interview.notes,
+        questions: interview.questions.map(q => ({ ...q, refAnswer: q.refAnswer || '' })),
+      });
+      editingInterviewId.value = interview.id;
+      interviewFormOpen.value = true;
+    }
+
+    function cancelInterview() {
+      interviewFormOpen.value = false;
+      editingInterviewId.value = null;
+    }
+
+    function saveInterview() {
+      const app = applications.value.find(a => a.id === routeId.value);
+      if (!app) return;
+      const record = {
+        id: editingInterviewId.value || crypto.randomUUID(),
+        date: iForm.date || new Date().toISOString().slice(0, 10),
+        round: iForm.round,
+        notes: iForm.notes,
+        questions: iForm.questions.map(q => ({ ...q })),
+      };
+      if (!editingInterviewId.value) {
+        app.interviews.push(record);
+      } else {
+        const idx = app.interviews.findIndex(i => i.id === editingInterviewId.value);
+        if (idx !== -1) app.interviews[idx] = record;
+      }
+      app.updatedAt = new Date().toISOString();
+      cancelInterview();
+    }
+
+    function deleteInterview(id) {
+      if (!confirm('确认删除这条面试记录？')) return;
+      const app = applications.value.find(a => a.id === routeId.value);
+      if (app) app.interviews = app.interviews.filter(i => i.id !== id);
+      cancelInterview();
+    }
+
+    function addQuestion() {
+      iForm.questions.push({ id: crypto.randomUUID(), question: '', answer: '', refAnswer: '' });
+    }
+
+    function removeQuestion(idx) {
+      iForm.questions.splice(idx, 1);
+    }
+
+    // ── AI 生成面试参考答案 ──
+    const aiRefLoadingMap = ref({});
+
+    async function generateRefAnswer(q) {
+      const app = applications.value.find(a => a.id === routeId.value);
+      if (!app) return;
+      if (!hasAnyKey()) {
+        if (confirm('未配置 API Key，前往设置页配置？')) window.location.hash = '#settings';
+        return;
+      }
+      if (!q.question.trim()) { alert('请先填写面试题目'); return; }
+      if (q.refAnswer && !confirm('将覆盖已有参考答案，确认重新生成？')) return;
+
+      aiRefLoadingMap.value[q.id] = true;
+      const jdContext = app.jdFormatted || app.jdRaw || '';
+      const system = '你是一位资深面试辅导顾问。直接输出面试参考答案，不要添加任何解释、点评或"为什么这样回答好"之类的说明，不要有前言或总结，用中文回答。';
+      const user = `岗位：${app.position}\n公司：${app.companyName}${jdContext ? '\n\n职位描述（JD）：\n' + jdContext : ''}\n\n面试题目：\n${q.question}`;
+      try {
+        q.refAnswer = await callTextAI(settings.value, system, user);
+      } catch (err) {
+        alert('AI 生成失败：' + (err.message || '请重试'));
+      } finally {
+        aiRefLoadingMap.value[q.id] = false;
+      }
+    }
+
+    // ── 测试数据（验证用，循环状态） ──
+    function addTestRecord() {
+      const idx = applications.value.length;
+      const status = PRESET_STATUSES[idx % PRESET_STATUSES.length];
+      const interviewRound = status === '面试中' ? ROUND_OPTIONS[idx % ROUND_OPTIONS.length] : '';
+      applications.value.push({
+        id: crypto.randomUUID(),
+        companyName: ['腾讯', '字节跳动', '阿里巴巴', '美团', '百度', '网易', '京东', '滴滴'][idx % 8],
+        position: ['前端工程师', '后端工程师', '产品经理', '数据分析师', 'iOS 工程师', 'Android 工程师', '算法工程师', '测试工程师'][idx % 8],
+        applicationDate: new Date(Date.now() - idx * 86400000 * 2).toISOString().slice(0, 10),
+        status,
+        interviewRound,
+        companyBrief: '测试公司简介。',
+        jdRaw: '',
+        jdFormatted: '',
+        aiAnalysis: '',
+        interviews: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    // ── 状态统计 + 过期检测 ──
+    const statusStats = computed(() => {
+      const map = {};
+      applications.value.forEach(a => { map[a.status] = (map[a.status] || 0) + 1; });
+      return allStatuses.value.filter(s => map[s]).map(s => ({ status: s, count: map[s] }));
+    });
+
+    function isStale(app) {
+      const last = new Date(app.updatedAt || app.createdAt);
+      const days = (Date.now() - last.getTime()) / 86400000;
+      return days > 7 && !['已 Offer', '已挂'].includes(app.status);
+    }
+
+    // ── 面经导出 ──
+    function exportInterviews(app) {
+      const sorted = [...app.interviews].sort((a, b) => b.date.localeCompare(a.date));
+      if (sorted.length === 0) { alert('暂无面试记录可导出'); return; }
+      const lines = [
+        `公司：${app.companyName}`,
+        `岗位：${app.position}`,
+        `投递日期：${app.applicationDate}`,
+        '',
+      ];
+      sorted.forEach(iv => {
+        lines.push('━'.repeat(40));
+        lines.push(`${iv.round || '面试'} | ${iv.date}`);
+        if (iv.notes) lines.push(`备注：${iv.notes}`);
+        lines.push('');
+        iv.questions.forEach((q, i) => {
+          lines.push(`Q${i + 1}. ${q.question || '（未填写题目）'}`);
+          if (q.answer)    { lines.push('【我的回答】'); lines.push(q.answer); lines.push(''); }
+          if (q.refAnswer) { lines.push('【参考答案】'); lines.push(q.refAnswer); lines.push(''); }
+        });
+      });
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `面经-${app.companyName}-${app.position}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ── 卡片 JD 展开 ──
+    const expandedCards = ref({});
+    function toggleCardExpand(id) {
+      expandedCards.value[id] = !expandedCards.value[id];
+    }
+
+    // ── 面试前浏览：自测模式 ──
+    const selfTestMode = ref(false);
+    const revealedAnswers = ref({});
+
+    function toggleSelfTest() {
+      selfTestMode.value = !selfTestMode.value;
+      revealedAnswers.value = {};
+    }
+
+    function revealAnswer(qId) {
+      revealedAnswers.value[qId] = true;
+    }
+
+    // ── 当前详情页应用 ──
+    const currentApp = computed(() =>
+      ['detail', 'review'].includes(page.value)
+        ? (applications.value.find(a => a.id === routeId.value) || null)
+        : null
+    );
+
+    const detailTab = ref('info');
+
+    const jdHtml = computed(() => {
+      const src = currentApp.value?.jdFormatted || '';
+      return src ? marked.parse(src) : '';
+    });
+
+    // ── 表单状态 ──
+    const todayStr = () => new Date().toISOString().slice(0, 10);
+
+    // ── AI JD 格式化 ──
+    const jdFormatLoading = ref(false);
+    const jdFormatError   = ref('');
+
+    function hasAnyKey() {
+      return !!(settings.value.deepseekApiKey || settings.value.qwenApiKey);
+    }
+
+    async function formatJDForm() {
+      if (!hasAnyKey()) {
+        if (confirm('未配置 API Key，前往设置页配置？')) window.location.hash = '#settings';
+        return;
+      }
+      if (!form.jdRaw.trim()) return;
+      jdFormatLoading.value = true;
+      jdFormatError.value   = '';
+      try {
+        form.jdFormatted = await callTextAI(settings.value, JD_FORMAT_PROMPT, JD_FORMAT_USER(form.jdRaw));
+      } catch (err) {
+        jdFormatError.value = err.message || 'AI 格式化失败，请重试';
+      } finally {
+        jdFormatLoading.value = false;
+      }
+    }
+
+    async function formatJD(appId) {
+      const app = applications.value.find(a => a.id === appId);
+      if (!app || !app.jdRaw.trim()) return;
+      if (!hasAnyKey()) {
+        if (confirm('未配置 API Key，前往设置页配置？')) window.location.hash = '#settings';
+        return;
+      }
+      jdFormatLoading.value = true;
+      jdFormatError.value   = '';
+      try {
+        app.jdFormatted = await callTextAI(settings.value, JD_FORMAT_PROMPT, JD_FORMAT_USER(app.jdRaw));
+        app.updatedAt   = new Date().toISOString();
+      } catch (err) {
+        jdFormatError.value = err.message || 'AI 格式化失败，请重试';
+      } finally {
+        jdFormatLoading.value = false;
+      }
+    }
+
+    const formJdHtml = computed(() =>
+      form.jdFormatted ? marked.parse(form.jdFormatted) : ''
+    );
+
+    // ── JD 截图识别 ──
+    const jdImageLoading  = ref(false);
+    const jdImageError    = ref('');
+    const jdImageInputRef = ref(null);
+
+    async function handleJDImage(event) {
+      const file = event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      if (!file.type.startsWith('image/')) {
+        jdImageError.value = '请上传图片文件（JPG、PNG、WEBP 等）';
+        return;
+      }
+      if (!hasAnyKey()) {
+        if (confirm('未配置 API Key，前往设置页配置？')) window.location.hash = '#settings';
+        return;
+      }
+      jdImageLoading.value = true;
+      jdImageError.value   = '';
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload  = e => resolve(e.target.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const text = await extractJDFromImage(settings.value, base64, file.type);
+        if (text) form.jdRaw = form.jdRaw ? form.jdRaw + '\n\n' + text : text;
+      } catch (err) {
+        jdImageError.value = err.message || '图片识别失败，请重试';
+      } finally {
+        jdImageLoading.value = false;
+      }
+    }
+
+    // ── AI 面试建议分析 ──
+    const aiAnalysisLoading = ref(false);
+    const aiAnalysisError   = ref('');
+
+    const AI_ANALYSIS_SYSTEM = '你是一位资深求职顾问，用中文回答，Markdown 格式输出。';
+    const AI_ANALYSIS_USER = (jd, resume) =>
+      `以下是候选人的简历和目标岗位的 JD。请分析：1）简历与 JD 的核心匹配点；2）潜在短板及准备方向；3）面试中应重点强调的 2-3 个亮点；4）根据 JD 推断可能被问到的问题方向。\n\n---\n### 简历\n${resume}\n\n### 职位描述（JD）\n${jd}`;
+
+    const aiAnalysisHtml = computed(() => {
+      const src = currentApp.value?.aiAnalysis || '';
+      return src ? marked.parse(src) : '';
+    });
+
+    function renderMd(text) {
+      return text ? marked.parse(String(text)) : '';
+    }
+
+    async function analyzeWithAI(appId) {
+      const app = applications.value.find(a => a.id === appId);
+      if (!app) return;
+      if (!hasAnyKey()) {
+        if (confirm('未配置 API Key，前往设置页配置？')) window.location.hash = '#settings';
+        return;
+      }
+      if (!app.jdFormatted) {
+        alert('请先对 JD 进行 AI 格式化，再生成面试建议。');
+        return;
+      }
+      if (!settings.value.resumeText) {
+        if (confirm('未上传简历，前往设置页上传？')) window.location.hash = '#settings';
+        return;
+      }
+      if (app.aiAnalysis && !confirm('将覆盖已有的分析结果，确认重新分析？')) return;
+      aiAnalysisLoading.value = true;
+      aiAnalysisError.value   = '';
+      try {
+        app.aiAnalysis = await callTextAI(
+          settings.value,
+          AI_ANALYSIS_SYSTEM,
+          AI_ANALYSIS_USER(app.jdFormatted, settings.value.resumeText),
+        );
+        app.updatedAt = new Date().toISOString();
+      } catch (err) {
+        aiAnalysisError.value = err.message || 'AI 分析失败，请重试';
+      } finally {
+        aiAnalysisLoading.value = false;
+      }
+    }
+
+    // ── 表单状态 ──
+    const form = reactive({
+      companyName: '', position: '', applicationDate: todayStr(),
+      status: '已投递待回复', interviewRound: '', workCity: '', companyBrief: '', notes: '',
+      offerSalary: '', jdRaw: '', jdFormatted: '',
+    });
+    const errors = reactive({ companyName: '', position: '' });
+
+    function resetForm() {
+      Object.assign(form, {
+        companyName: '', position: '', applicationDate: todayStr(),
+        status: '已投递待回复', interviewRound: '', workCity: '', companyBrief: '', notes: '',
+        offerSalary: '', jdRaw: '', jdFormatted: '',
+      });
+      errors.companyName = ''; errors.position = '';
+      jdFormatError.value = '';
+    }
+
+    function loadFormFromApp(app) {
+      Object.assign(form, {
+        companyName: app.companyName, position: app.position,
+        applicationDate: app.applicationDate, status: app.status,
+        interviewRound: app.interviewRound || '', companyBrief: app.companyBrief || '',
+        workCity: app.workCity || '', notes: app.notes || '', offerSalary: app.offerSalary || '',
+        jdRaw: app.jdRaw || '', jdFormatted: app.jdFormatted || '',
+      });
+      errors.companyName = ''; errors.position = '';
+      jdFormatError.value = '';
+    }
+
+    function validateForm() {
+      errors.companyName = form.companyName.trim() ? '' : '请填写公司名';
+      errors.position   = form.position.trim()    ? '' : '请填写岗位名称';
+      return !errors.companyName && !errors.position;
+    }
+
+    function saveApp() {
+      if (!validateForm()) return;
+      const now = new Date().toISOString();
+      const data = {
+        companyName:     form.companyName.trim(),
+        position:        form.position.trim(),
+        applicationDate: form.applicationDate,
+        status:          form.status,
+        interviewRound:  form.status === '面试中' ? form.interviewRound : '',
+        companyBrief:    form.companyBrief,
+        workCity:        form.workCity,
+        notes:           form.notes,
+        offerSalary:     form.status === '已 Offer' ? form.offerSalary : '',
+        jdRaw:           form.jdRaw,
+        jdFormatted:     form.jdFormatted,
+        updatedAt:       now,
+      };
+      if (page.value === 'add') {
+        applications.value.push({
+          id: crypto.randomUUID(), ...data,
+          aiAnalysis: '', interviews: [], createdAt: now,
+        });
+        window.location.hash = '#list';
+      } else {
+        const app = applications.value.find(a => a.id === routeId.value);
+        if (app) Object.assign(app, data);
+        window.location.hash = '#detail/' + routeId.value;
+      }
+    }
+
+    function deleteApp() {
+      const app = applications.value.find(a => a.id === routeId.value);
+      const label = app ? `「${app.companyName} · ${app.position}」` : '此记录';
+      if (!confirm(`确认删除 ${label}？此操作不可撤销。`)) return;
+      applications.value = applications.value.filter(a => a.id !== routeId.value);
+      window.location.hash = '#list';
+    }
+
+    // 路由变化时初始化各页面状态
+    watch([page, routeId], ([newPage, newId]) => {
+      if (newPage === 'add') resetForm();
+      else if (newPage === 'edit') {
+        const app = applications.value.find(a => a.id === newId);
+        app ? loadFormFromApp(app) : (window.location.hash = '#list');
+      } else if (newPage === 'detail') {
+        detailTab.value = 'info';
+        cancelInterview();
+      } else if (newPage === 'review') {
+        selfTestMode.value = false;
+        revealedAnswers.value = {};
+      }
+    });
+
+    onMounted(() => {
+      window.addEventListener('hashchange', parseRoute);
+      parseRoute();
+    });
+
+    return {
+      page, routeId, navClass,
+      applications, settings,
+      exportData, triggerImport, handleImportFile, importInputRef,
+      filterStatus, filterRound, searchQuery, allStatuses, filteredApplications,
+      statusBadgeClass, expandedCards, toggleCardExpand,
+      activeBadgePicker, pickerStatus, customRoundInput, roundPickerOptions: ROUND_PICKER_OPTIONS,
+      openBadgePicker, closeBadgePicker, selectStatus, selectRound, submitCustomRound,
+      pickerOfferSalary, selectOfferSalary, submitOfferSalary,
+      currentApp, detailTab, jdHtml,
+      jdFormatLoading, jdFormatError, formatJDForm, formatJD, formJdHtml,
+      aiAnalysisLoading, aiAnalysisError, aiAnalysisHtml, analyzeWithAI, renderMd,
+      statusStats, isStale, exportInterviews,
+      selfTestMode, revealedAnswers, toggleSelfTest, revealAnswer,
+      jdImageLoading, jdImageError, jdImageInputRef, handleJDImage,
+      sortedInterviews, interviewFormOpen, editingInterviewId, iForm,
+      openAddInterview, openEditInterview, cancelInterview, saveInterview, deleteInterview,
+      addQuestion, removeQuestion, interviewRounds: INTERVIEW_ROUNDS,
+      aiRefLoadingMap, generateRefAnswer,
+      resumeInputRef, resumeLoading, resumeError, showManualPaste,
+      handleResumeFile, clearResume,
+      newCustomStatus, addCustomStatus, removeCustomStatus,
+      form, errors, saveApp, deleteApp,
+      addTestRecord,
+    };
+  }
+}).mount('#app');
+</script>
+
+</body>
+</html>
