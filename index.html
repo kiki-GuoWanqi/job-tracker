@@ -2435,14 +2435,26 @@
 
     <!-- 设置页 -->
     <div v-else-if="page === 'settings'" class="fade-in">
-      <div class="mb-7">
+      <div class="mb-5">
         <h1 class="text-[26px] font-semibold text-zinc-900 tracking-tight">设置</h1>
-        <p class="text-sm text-zinc-500 mt-1">API、简历、自定义、数据备份都在这里</p>
+        <p class="text-sm text-zinc-500 mt-1">{{ settingsTabMeta.subtitle }}</p>
+      </div>
+
+      <!-- Tab 导航 -->
+      <div class="flex items-center gap-1 mb-5 border-b border-zinc-200">
+        <a v-for="t in SETTINGS_TABS" :key="t.key"
+           :href="'#settings/' + t.key"
+           class="px-4 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors"
+           :class="settingsTab === t.key
+             ? 'border-indigo-500 text-indigo-700'
+             : 'border-transparent text-zinc-500 hover:text-zinc-800'">
+          {{ t.label }}
+        </a>
       </div>
 
       <div class="space-y-4">
         <!-- 求职偏好 -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'general'" class="card p-6">
           <div class="flex items-start justify-between mb-5">
             <div>
               <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
@@ -2529,7 +2541,7 @@
         </section>
 
         <!-- Webhook 通知 -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'notify'" class="card p-6">
           <div class="flex items-start justify-between mb-5">
             <div>
               <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
@@ -2623,7 +2635,7 @@
         </section>
 
         <!-- AI 模型配置 -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'models'" class="card p-6">
           <div class="flex items-start justify-between mb-5">
             <div>
               <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
@@ -2737,7 +2749,7 @@
         </section>
 
         <!-- AI 功能路由 -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'models'" class="card p-6">
           <div class="mb-4">
             <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
               <span class="icon-chip violet">🎚️</span>
@@ -2772,7 +2784,7 @@
         </section>
 
         <!-- 简历（多简历管理） -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'general'" class="card p-6">
           <div class="flex items-start justify-between mb-5 gap-3">
             <div>
               <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
@@ -2866,7 +2878,7 @@
         </section>
 
         <!-- 自定义状态 -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'general'" class="card p-6">
           <div class="mb-5">
             <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
               <span class="icon-chip violet">🏷️</span>
@@ -2894,7 +2906,7 @@
         </section>
 
         <!-- 数据备份 -->
-        <section class="card p-6">
+        <section v-show="settingsTab === 'general'" class="card p-6">
           <div class="mb-5">
             <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
               <span class="icon-chip green">💾</span>

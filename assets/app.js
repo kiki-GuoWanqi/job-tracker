@@ -86,6 +86,18 @@ createApp({
     const page = ref('list');
     const routeId = ref('');
 
+    // 设置页子分页（用 routeId 作 tab key，URL 是 #settings/general | /models | /notify）
+    const SETTINGS_TABS = [
+      { key: 'general', label: '常规',     subtitle: '求职偏好、简历、自定义状态、数据备份' },
+      { key: 'models',  label: '模型配置', subtitle: 'AI 服务商 Key / Base URL / 路由分发' },
+      { key: 'notify',  label: '通知',     subtitle: 'Webhook 推送状态变更与每日摘要' }
+    ];
+    const settingsTab = computed(() => {
+      const valid = SETTINGS_TABS.map(t => t.key);
+      return valid.includes(routeId.value) ? routeId.value : 'general';
+    });
+    const settingsTabMeta = computed(() => SETTINGS_TABS.find(t => t.key === settingsTab.value) || SETTINGS_TABS[0]);
+
     function parseRoute() {
       const hash = window.location.hash.replace(/^#\/?/, '') || 'list';
       const [p, id = ''] = hash.split('/');
@@ -2397,6 +2409,8 @@ ${resume}${buildPreferencesContext()}
       notifyDraft, notifyShow,
       notifySaveLoading, notifySaveResult, saveNotifyConfig, clearNotifyUrl,
       notifyTestLoading, notifyTestResult, testNotify,
+      // 设置页子分页
+      SETTINGS_TABS, settingsTab, settingsTabMeta,
       // 数据统计
       statsData, statsLoading, statsError, loadStats,
       // JD 抓取
