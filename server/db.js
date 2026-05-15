@@ -21,7 +21,27 @@ export function initDb() {
   dbInstance.exec('PRAGMA foreign_keys = ON');
   const schema = fs.readFileSync(schemaPath, 'utf-8');
   dbInstance.exec(schema);
+  runMigrations(dbInstance);
   return dbInstance;
+}
+
+// Idempotent ALTER TABLE for fields added after initial schema.
+// schema.sql holds the latest shape for fresh installs; this catches existing DBs.
+function runMigrations(db) {
+  const cols = new Set(
+    db.prepare("PRAGMA table_info(applications)").all().map(c => c.name)
+  );
+  const additions = [
+    ['greeting_message', 'TEXT'],
+    ['greeting_message_at', 'TEXT'],
+    ['cover_letter', 'TEXT'],
+    ['cover_letter_at', 'TEXT']
+  ];
+  for (const [col, type] of additions) {
+    if (!cols.has(col)) {
+      db.exec(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);
+    }
+  }
 }
 
 export function getDb() {

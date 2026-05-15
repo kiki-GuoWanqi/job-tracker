@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS applications (
   next_interview_date TEXT,
   offer_deadline TEXT,
   notes TEXT,
+  greeting_message TEXT,
+  greeting_message_at TEXT,
+  cover_letter TEXT,
+  cover_letter_at TEXT,
   created_at TEXT,
   updated_at TEXT
 );

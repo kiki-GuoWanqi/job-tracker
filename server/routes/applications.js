@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
 import { APP_DB_COLUMNS, rowToApplication, applicationToRow } from '../mappers.js';
+import { notify } from '../services/notifier.js';
 
 const router = Router();
 
@@ -129,7 +130,7 @@ router.post('/:id/status', (req, res) => {
   if (typeof status !== 'string' || !status) {
     return res.status(400).json({ error: 'status required' });
   }
-  const existing = db.prepare('SELECT id FROM applications WHERE id = ?').get(id);
+  const existing = db.prepare('SELECT id, status, interview_round, company_name, position FROM applications WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   const now = new Date().toISOString();
@@ -151,6 +152,18 @@ router.post('/:id/status', (req, res) => {
   } catch (e) {
     db.prepare('ROLLBACK').run();
     throw e;
+  }
+
+  // 通知（异步、失败静默）：只在状态或轮次实际变化时触发
+  const statusChanged = existing.status !== status || existing.interview_round !== round;
+  if (statusChanged) {
+    const fromLabel = existing.interview_round ? `${existing.status}·${existing.interview_round}` : existing.status;
+    const toLabel   = round ? `${status}·${round}` : status;
+    notify('status_changed', {
+      title: `📌 投递状态变更：${existing.company_name}`,
+      summary: `${existing.position || ''}　${fromLabel} → ${toLabel}`,
+      items: [`公司：${existing.company_name}`, `岗位：${existing.position || '（未填）'}`, `状态：${fromLabel} → ${toLabel}`]
+    }).catch(() => {});
   }
 
   const row = db.prepare('SELECT * FROM applications WHERE id = ?').get(id);

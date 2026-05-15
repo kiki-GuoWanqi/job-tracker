@@ -89,7 +89,7 @@ createApp({
     function parseRoute() {
       const hash = window.location.hash.replace(/^#\/?/, '') || 'list';
       const [p, id = ''] = hash.split('/');
-      const valid = ['list', 'add', 'edit', 'detail', 'review', 'settings', 'offers', 'archived', 'calendar'];
+      const valid = ['list', 'add', 'edit', 'detail', 'review', 'settings', 'offers', 'archived', 'calendar', 'stats'];
       page.value = valid.includes(p) ? p : 'notfound';
       routeId.value = id;
     }
@@ -110,9 +110,22 @@ createApp({
 
     // ── 数据状态（异步从后端加载） ──
     const applications = ref([]);
+    const EMPTY_PREFS = () => ({
+      targetPositions: [],
+      targetCities: [],
+      salaryMin: null,
+      salaryMax: null,
+      companyTypes: [],
+      urgency: ''
+    });
+
     const settings = ref({
       defaultResumeId: '',
       customStatuses: [],
+      jobPreferences: EMPTY_PREFS(),
+      notifySettings: { hasUrl: false, urlHost: '', urlTail: '', channel: 'generic', events: {} },
+      notifyEvents: [],     // [{ key, label, defaultOn }, ...]
+      notifyChannels: [],   // [{ key, label }, ...]
       resumes: [],
       hasDeepseekKey: false,
       hasQwenKey: false,
@@ -123,6 +136,67 @@ createApp({
       aiProviderMeta: {},   // { deepseek: { key, label, defaultBaseUrl, ... }, ... }
       aiPurposes: []        // [{ key, label, kind }, ...]
     });
+
+    // 求职偏好的预设选项
+    const COMPANY_TYPE_OPTIONS = ['大厂', '独角兽', '上市公司', '外企', '国企', '央企', '创业公司', '不限'];
+    const URGENCY_OPTIONS = ['观望中', '正在找', '紧急'];
+
+    // 把求职偏好渲染成 prompt 上下文（无偏好时返回空串，不污染 prompt）
+    function buildPreferencesContext() {
+      const p = settings.value.jobPreferences || {};
+      const parts = [];
+      if (Array.isArray(p.targetPositions) && p.targetPositions.length) {
+        parts.push(`- 目标岗位：${p.targetPositions.join('、')}`);
+      }
+      if (Array.isArray(p.targetCities) && p.targetCities.length) {
+        parts.push(`- 目标城市：${p.targetCities.join('、')}`);
+      }
+      if (typeof p.salaryMin === 'number' || typeof p.salaryMax === 'number') {
+        const lo = typeof p.salaryMin === 'number' ? `${p.salaryMin}K` : '不限';
+        const hi = typeof p.salaryMax === 'number' ? `${p.salaryMax}K` : '不限';
+        parts.push(`- 期望薪资：${lo} - ${hi}/月`);
+      }
+      if (Array.isArray(p.companyTypes) && p.companyTypes.length) {
+        parts.push(`- 偏好公司类型：${p.companyTypes.join('、')}`);
+      }
+      if (p.urgency) {
+        parts.push(`- 求职紧迫度：${p.urgency}`);
+      }
+      if (!parts.length) return '';
+      return `\n\n### 候选人求职偏好\n${parts.join('\n')}`;
+    }
+
+    // 数组 ↔ 文本的双向绑定，供表单 input 使用
+    function arrayTextModel(field) {
+      return computed({
+        get: () => {
+          const arr = settings.value.jobPreferences?.[field];
+          return Array.isArray(arr) ? arr.join('、') : '';
+        },
+        set: (v) => {
+          const arr = String(v || '')
+            .split(/[、,，;；\s]+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+          if (!settings.value.jobPreferences) settings.value.jobPreferences = EMPTY_PREFS();
+          settings.value.jobPreferences[field] = arr;
+        }
+      });
+    }
+
+    const prefPositionsText = arrayTextModel('targetPositions');
+    const prefCitiesText    = arrayTextModel('targetCities');
+
+    function togglePrefCompanyType(label) {
+      if (!settings.value.jobPreferences) settings.value.jobPreferences = EMPTY_PREFS();
+      const arr = settings.value.jobPreferences.companyTypes || [];
+      const idx = arr.indexOf(label);
+      if (idx >= 0) {
+        settings.value.jobPreferences.companyTypes = arr.filter(x => x !== label);
+      } else {
+        settings.value.jobPreferences.companyTypes = [...arr, label];
+      }
+    }
 
     function hasAnyKey() {
       const ap = settings.value.aiProviders || {};
@@ -214,7 +288,8 @@ createApp({
         settingsFlushTimer = null;
         const payload = {
           defaultResumeId: settings.value.defaultResumeId || '',
-          customStatuses: Array.isArray(settings.value.customStatuses) ? settings.value.customStatuses : []
+          customStatuses: Array.isArray(settings.value.customStatuses) ? settings.value.customStatuses : [],
+          jobPreferences: settings.value.jobPreferences || EMPTY_PREFS()
         };
         const ser = JSON.stringify(payload);
         if (ser === lastSentSettings) return;
@@ -229,7 +304,7 @@ createApp({
       }, 500);
     }
 
-    watch(() => [settings.value.defaultResumeId, settings.value.customStatuses], () => {
+    watch(() => [settings.value.defaultResumeId, settings.value.customStatuses, settings.value.jobPreferences], () => {
       if (suppressWatch) return;
       scheduleSettingsFlush();
     }, { deep: true });
@@ -261,6 +336,10 @@ createApp({
         settings.value = {
           defaultResumeId: st.defaultResumeId || '',
           customStatuses: st.customStatuses || [],
+          jobPreferences: { ...EMPTY_PREFS(), ...(st.jobPreferences || {}) },
+          notifySettings: st.notifySettings || { hasUrl: false, urlHost: '', urlTail: '', channel: 'generic', events: {} },
+          notifyEvents: st.notifyEvents || [],
+          notifyChannels: st.notifyChannels || [],
           resumes: resumes || [],
           hasDeepseekKey: Boolean(st.hasDeepseekKey),
           hasQwenKey: Boolean(st.hasQwenKey),
@@ -274,7 +353,8 @@ createApp({
         markAllClean();
         lastSentSettings = JSON.stringify({
           defaultResumeId: settings.value.defaultResumeId,
-          customStatuses: settings.value.customStatuses
+          customStatuses: settings.value.customStatuses,
+          jobPreferences: settings.value.jobPreferences
         });
       } finally {
         queueMicrotask(() => { suppressWatch = false; });
@@ -1307,7 +1387,7 @@ createApp({
 
     const AI_ANALYSIS_SYSTEM = '你是一位资深求职顾问，用中文回答，Markdown 格式输出。';
     const AI_ANALYSIS_USER = (jd, resume) =>
-      `以下是候选人的简历和目标岗位的 JD。请分析：1）简历与 JD 的核心匹配点；2）潜在短板及准备方向；3）面试中应重点强调的 2-3 个亮点；4）根据 JD 推断可能被问到的问题方向。\n\n---\n### 简历\n${resume}\n\n### 职位描述（JD）\n${jd}`;
+      `以下是候选人的简历和目标岗位的 JD。请分析：1）简历与 JD 的核心匹配点；2）潜在短板及准备方向；3）面试中应重点强调的 2-3 个亮点；4）根据 JD 推断可能被问到的问题方向。\n\n---\n### 简历\n${resume}\n\n### 职位描述（JD）\n${jd}${buildPreferencesContext()}`;
 
     // ── AI 公司研究 ──
     const COMPANY_RESEARCH_SYSTEM = '你是一名资深求职顾问，输出纯 Markdown，不加额外说明文字，不要使用代码块包裹。回答内容基于训练数据中的公开认知，不要编造未经证实的具体数据。如果对某家公司不熟悉，请按通用模板给出可填写的提纲框架。';
@@ -1332,7 +1412,7 @@ createApp({
 ## 面试关注方向
 （基于以上分析，推断面试官可能重点考察的 3-5 个方向）
 
-${jd ? `参考职位描述：\n${jd.slice(0, 600)}` : ''}`;
+${jd ? `参考职位描述：\n${jd.slice(0, 600)}` : ''}${buildPreferencesContext()}`;
 
     const companyResearchLoading = ref({});
     const companyResearchError   = ref({});
@@ -1367,6 +1447,147 @@ ${jd ? `参考职位描述：\n${jd.slice(0, 600)}` : ''}`;
       }
     }
 
+    // ── AI 打招呼语生成（Boss 直聘等平台主动打招呼用）──
+    const GREETING_SYSTEM = '你是一名熟悉中国互联网招聘场景的求职顾问。输出简体中文纯文本，不要任何 markdown 标记、不要引号、不要解释性前后缀。';
+    const GREETING_USER = (company, position, jd, resume) =>
+`请基于下方信息，生成一段在招聘 App（如 Boss 直聘）主动打招呼时使用的开场白。
+
+### 硬性要求
+- 80 到 150 字之间
+- 第一人称自然口吻，不卑微也不浮夸
+- 必须明确点到自己的核心匹配点（具体经历/技能 1-2 条），让 HR 一眼看到价值
+- 结尾给出一个轻量的下一步动作（例：希望进一步了解 / 期待沟通）
+- 不要使用任何 markdown 符号、不要分段、输出为单段纯文本
+
+### 目标岗位
+${company} · ${position}
+
+### 职位描述
+${(jd || '（未提供）').slice(0, 1500)}
+
+### 我的简历摘要
+${(resume || '').slice(0, 1500)}${buildPreferencesContext()}`;
+
+    const greetingLoading = ref({});
+    const greetingError   = ref({});
+
+    async function generateGreeting(appId) {
+      const app = applications.value.find(a => a.id === appId);
+      if (!app) return;
+      if (!hasAnyKey()) {
+        alert('后端未配置 AI Key，请编辑 .env 后重启服务');
+        return;
+      }
+      const jdText = app.jdFormatted || app.jdRaw;
+      if (!jdText) {
+        alert('请先填写 JD 内容');
+        return;
+      }
+      const resume = resumeOf(app);
+      if (!resume || !resume.text) {
+        alert('请先关联一份简历，以便生成贴合本人经历的打招呼语');
+        return;
+      }
+      if (app.greetingMessage && !confirm('将覆盖已有的打招呼语，确认重新生成？')) return;
+      greetingLoading.value[appId] = true;
+      greetingError.value[appId]   = '';
+      try {
+        app.greetingMessage = await callTextAI(
+          GREETING_SYSTEM,
+          GREETING_USER(app.companyName, app.position, jdText, resume.text),
+          'greeting_message'
+        );
+        app.greetingMessageAt = new Date().toISOString();
+        app.updatedAt = new Date().toISOString();
+      } catch (err) {
+        greetingError.value[appId] = err.message || 'AI 生成失败，请重试';
+      } finally {
+        greetingLoading.value[appId] = false;
+      }
+    }
+
+    // ── AI 求职信生成 ──
+    const COVER_LETTER_SYSTEM = '你是一名资深求职顾问，擅长撰写既有专业度又有温度的求职信。输出简体中文纯文本（可分段，用空行分段），不要使用 markdown 语法（无 #、*、- 等），不要包含任何代码块或解释。';
+    const COVER_LETTER_USER = (company, position, jd, resume) =>
+`请为以下岗位撰写一封约 300 字的简短求职信（中文），用于邮件或在线表单。
+
+### 结构（必须包含）
+1. 称呼（HR 你好 / Dear Hiring Team 任选其一，简洁即可）
+2. 第一段：开门见山表明目标岗位 + 1 句核心卖点
+3. 第二段：对应 JD 重点要求，给出 2-3 条具体能力或经历佐证
+4. 第三段：表达对公司业务/团队的具体认知或兴趣点
+5. 结尾：简短的下一步邀约 + 礼貌签名（用「此致 + 姓名占位」）
+
+### 风格
+- 真诚、克制、有针对性，不堆砌空话
+- 用纯文本分段，段间用一个空行隔开
+- 不写日期、不写住址、不要 markdown
+
+### 目标岗位
+${company} · ${position}
+
+### 职位描述
+${(jd || '（未提供）').slice(0, 1800)}
+
+### 我的简历摘要
+${(resume || '').slice(0, 1800)}${buildPreferencesContext()}`;
+
+    const coverLetterLoading = ref({});
+    const coverLetterError   = ref({});
+
+    async function generateCoverLetter(appId) {
+      const app = applications.value.find(a => a.id === appId);
+      if (!app) return;
+      if (!hasAnyKey()) {
+        alert('后端未配置 AI Key，请编辑 .env 后重启服务');
+        return;
+      }
+      const jdText = app.jdFormatted || app.jdRaw;
+      if (!jdText) {
+        alert('请先填写 JD 内容');
+        return;
+      }
+      const resume = resumeOf(app);
+      if (!resume || !resume.text) {
+        alert('请先关联一份简历，以便生成贴合本人经历的求职信');
+        return;
+      }
+      if (app.coverLetter && !confirm('将覆盖已有的求职信，确认重新生成？')) return;
+      coverLetterLoading.value[appId] = true;
+      coverLetterError.value[appId]   = '';
+      try {
+        app.coverLetter = await callTextAI(
+          COVER_LETTER_SYSTEM,
+          COVER_LETTER_USER(app.companyName, app.position, jdText, resume.text),
+          'cover_letter'
+        );
+        app.coverLetterAt = new Date().toISOString();
+        app.updatedAt = new Date().toISOString();
+      } catch (err) {
+        coverLetterError.value[appId] = err.message || 'AI 生成失败，请重试';
+      } finally {
+        coverLetterLoading.value[appId] = false;
+      }
+    }
+
+    const copyFlash = ref({});  // { key: true } — 暂态，2 秒后清空
+    async function copyToClipboard(text, key) {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        if (key) {
+          copyFlash.value = { ...copyFlash.value, [key]: true };
+          setTimeout(() => {
+            const next = { ...copyFlash.value };
+            delete next[key];
+            copyFlash.value = next;
+          }, 2000);
+        }
+      } catch {
+        alert('复制失败，请手动选中文本');
+      }
+    }
+
     // ── AI 简历 × JD 匹配度评分 ──
     const matchScoreLoading = ref({});
     const matchScoreError   = ref({});
@@ -1382,7 +1603,7 @@ ${company} · ${position}
 ${jd}
 
 ### 候选人简历
-${resume}
+${resume}${buildPreferencesContext()}
 
 请严格输出以下 JSON 结构（仅 JSON 本身，不要加任何前言/总结/代码块标记）：
 {
@@ -1655,6 +1876,43 @@ ${resume}
       });
       errors.companyName = ''; errors.position = '';
       jdFormatError.value = '';
+      scrapeUrl.value = '';
+      scrapeError.value = '';
+      scrapeNote.value = '';
+    }
+
+    // ── 半自动 JD 抓取（Boss MVP + 通用 fallback）──
+    const scrapeUrl     = ref('');
+    const scrapeLoading = ref(false);
+    const scrapeError   = ref('');
+    const scrapeNote    = ref('');
+
+    async function scrapeFromUrl() {
+      const url = scrapeUrl.value.trim();
+      if (!url) {
+        scrapeError.value = '请粘贴岗位详情页 URL';
+        return;
+      }
+      scrapeLoading.value = true;
+      scrapeError.value = '';
+      scrapeNote.value = '';
+      try {
+        const data = await JobTrackerAPI.scrape.job(url);
+        // 只覆盖空字段，避免抢用户已有输入
+        if (!form.companyName && data.companyName) form.companyName = data.companyName;
+        if (!form.position    && data.position)    form.position    = data.position;
+        if (!form.workCity    && data.location)    form.workCity    = data.location;
+        if (!form.offerSalary && data.salary)      form.offerSalary = data.salary;
+        if (!form.jdRaw       && data.jdRaw)       form.jdRaw       = data.jdRaw;
+        scrapeNote.value = data.note || '已预填，请核对后保存';
+      } catch (e) {
+        scrapeError.value = e.message || '抓取失败';
+        if (e.detail?.blocked || /反爬|访问异常|HTTP 4|HTTP 5/.test(e.message || '')) {
+          scrapeNote.value = '建议改用「JD 截图导入」：在下方 JD 区粘贴截图或上传图片。';
+        }
+      } finally {
+        scrapeLoading.value = false;
+      }
     }
 
     function loadFormFromApp(app) {
@@ -1861,6 +2119,87 @@ ${resume}
       settings.value.aiProviders[providerKey].visionModel = meta.defaultVisionModel;
     }
 
+    // ── 通知配置（手动保存 + 测试发送）──
+    // webhookUrl 不在响应里明文返回（脱敏），所以前端用 draft 单独管理
+    const notifyDraft = reactive({
+      webhookUrl: '',
+      channel: 'generic',
+      events: {}
+    });
+    const notifyShow = ref(false);
+    const notifySaveLoading = ref(false);
+    const notifySaveResult  = ref('');
+    const notifyTestLoading = ref(false);
+    const notifyTestResult  = ref('');
+
+    // 初始化 draft：channel 和 events 同步自后端（webhookUrl 留空，避免回写脱敏字符串）
+    function syncNotifyDraft() {
+      const n = settings.value.notifySettings || {};
+      notifyDraft.channel = n.channel || 'generic';
+      const evs = {};
+      for (const e of settings.value.notifyEvents || []) {
+        evs[e.key] = n.events && typeof n.events[e.key] === 'boolean' ? n.events[e.key] : e.defaultOn;
+      }
+      notifyDraft.events = evs;
+      // 不动 webhookUrl，让用户决定填新值还是留空（留空 = 不修改）
+    }
+    watch(() => [settings.value.notifySettings, settings.value.notifyEvents], () => {
+      syncNotifyDraft();
+    }, { immediate: true, deep: true });
+
+    async function saveNotifyConfig() {
+      notifySaveLoading.value = true;
+      notifySaveResult.value  = '';
+      try {
+        const payload = {
+          channel: notifyDraft.channel,
+          events: { ...notifyDraft.events }
+        };
+        // 只在用户输入了新值时才覆盖 URL；空字符串显式视为「清除」（与 AI Key 行为一致）
+        if (notifyDraft.webhookUrl.trim() !== '') {
+          payload.webhookUrl = notifyDraft.webhookUrl.trim();
+        } else if (notifyDraft.webhookUrl === '__CLEAR__') {
+          payload.webhookUrl = '';
+        }
+        const updated = await JobTrackerAPI.settings.update({ notifySettings: payload });
+        settings.value.notifySettings = updated.notifySettings || settings.value.notifySettings;
+        notifyDraft.webhookUrl = '';   // 保存后清空草稿
+        notifySaveResult.value = '✓ 已保存';
+        setTimeout(() => { notifySaveResult.value = ''; }, 2000);
+      } catch (e) {
+        notifySaveResult.value = '✗ ' + (e.message || '保存失败');
+      } finally {
+        notifySaveLoading.value = false;
+      }
+    }
+
+    function clearNotifyUrl() {
+      if (!confirm('确认清除当前 Webhook URL？通知功能将不再发送。')) return;
+      notifyDraft.webhookUrl = '__CLEAR__';
+      saveNotifyConfig();
+    }
+
+    async function testNotify() {
+      // 若用户改了 URL/channel/events 还没保存，先保存再测，避免歧义
+      if (notifyDraft.webhookUrl.trim() !== '') {
+        await saveNotifyConfig();
+      }
+      if (!settings.value.notifySettings?.hasUrl) {
+        notifyTestResult.value = '✗ 请先填写并保存 Webhook URL';
+        return;
+      }
+      notifyTestLoading.value = true;
+      notifyTestResult.value  = '';
+      try {
+        await JobTrackerAPI.notify.test();
+        notifyTestResult.value = '✓ 已发送，请到对应通道查看';
+      } catch (e) {
+        notifyTestResult.value = '✗ ' + (e.message || '发送失败');
+      } finally {
+        notifyTestLoading.value = false;
+      }
+    }
+
     // ── AI 功能路由：单条变更立即保存 ──
     async function updateRouting(purposeKey, providerKey) {
       const old = settings.value.aiRouting[purposeKey];
@@ -1871,6 +2210,80 @@ ${resume}
         // 回滚
         settings.value.aiRouting = { ...settings.value.aiRouting, [purposeKey]: old };
         alert('保存路由失败：' + e.message);
+      }
+    }
+
+    // ── 数据统计页 ──
+    const statsData    = ref(null);
+    const statsLoading = ref(false);
+    const statsError   = ref('');
+    let funnelChart = null;
+    let trendChart  = null;
+
+    async function loadStats() {
+      statsLoading.value = true;
+      statsError.value   = '';
+      try {
+        statsData.value = await JobTrackerAPI.stats.overview();
+        // 等 DOM 更新出 canvas
+        await new Promise(r => requestAnimationFrame(r));
+        await new Promise(r => requestAnimationFrame(r));
+        renderStatsCharts();
+      } catch (e) {
+        statsError.value = e.message || '加载失败';
+      } finally {
+        statsLoading.value = false;
+      }
+    }
+
+    function renderStatsCharts() {
+      if (!statsData.value || typeof Chart === 'undefined') return;
+      const colorFunnel = ['#94a3b8', '#f59e0b', '#eab308', '#10b981', '#ef4444'];
+
+      const funnelEl = document.getElementById('chart-funnel');
+      if (funnelEl) {
+        if (funnelChart) funnelChart.destroy();
+        funnelChart = new Chart(funnelEl, {
+          type: 'bar',
+          data: {
+            labels: statsData.value.funnel.map(f => f.label),
+            datasets: [{
+              data: statsData.value.funnel.map(f => f.count),
+              backgroundColor: colorFunnel,
+              borderRadius: 6
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { beginAtZero: true, ticks: { precision: 0 } }
+            }
+          }
+        });
+      }
+
+      const trendEl = document.getElementById('chart-trend');
+      if (trendEl) {
+        if (trendChart) trendChart.destroy();
+        trendChart = new Chart(trendEl, {
+          type: 'line',
+          data: {
+            labels: statsData.value.trend.map(t => t.ym),
+            datasets: [{
+              label: '投递数',
+              data: statsData.value.trend.map(t => t.count),
+              borderColor: '#6366f1',
+              backgroundColor: 'rgba(99,102,241,0.15)',
+              fill: true,
+              tension: 0.3
+            }]
+          },
+          options: {
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+          }
+        });
       }
     }
 
@@ -1886,6 +2299,8 @@ ${resume}
       } else if (newPage === 'review') {
         selfTestMode.value = false;
         revealedAnswers.value = {};
+      } else if (newPage === 'stats') {
+        loadStats();
       }
       if (newPage === 'list') checkAndNotify();
     });
@@ -1971,6 +2386,21 @@ ${resume}
       // 公司研究
       companyResearchLoading, companyResearchError, companyResearchHtml,
       generateCompanyResearch,
+      // AI 打招呼语 + 求职信
+      greetingLoading, greetingError, generateGreeting,
+      coverLetterLoading, coverLetterError, generateCoverLetter,
+      copyToClipboard, copyFlash,
+      // 求职偏好
+      prefPositionsText, prefCitiesText, togglePrefCompanyType,
+      COMPANY_TYPE_OPTIONS, URGENCY_OPTIONS,
+      // 通知配置
+      notifyDraft, notifyShow,
+      notifySaveLoading, notifySaveResult, saveNotifyConfig, clearNotifyUrl,
+      notifyTestLoading, notifyTestResult, testNotify,
+      // 数据统计
+      statsData, statsLoading, statsError, loadStats,
+      // JD 抓取
+      scrapeUrl, scrapeLoading, scrapeError, scrapeNote, scrapeFromUrl,
       // AI 测试
       aiTestLoading, aiTestResult, testAIConnection,
       // AI 模型配置

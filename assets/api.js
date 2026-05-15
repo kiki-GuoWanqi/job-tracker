@@ -57,5 +57,18 @@ window.JobTrackerAPI = {
   backup: {
     export: () => request('GET', '/backup/export'),
     import: (payload) => request('POST', '/backup/import', payload)
+  },
+
+  notify: {
+    test: () => request('POST', '/notify/test'),
+    triggerDaily: () => request('POST', '/notify/trigger-daily')
+  },
+
+  stats: {
+    overview: () => request('GET', '/stats/overview')
+  },
+
+  scrape: {
+    job: (url) => request('POST', '/scrape/job', { url })
   }
 };

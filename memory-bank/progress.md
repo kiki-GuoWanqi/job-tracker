@@ -44,10 +44,21 @@
 - [2026-05-15] Step 10 完成：localStorage 迁移弹窗（onMounted 检测 `jobtracker_applications` 非空且后端为空时弹），一键调 /api/backup/import；迁移后原 key 改名为 `*_migrated_<ts>` 保留；设置页常驻「从浏览器迁移旧数据」按钮兜底
 - [2026-05-15] 端到端验证通过：Playwright 测试 splash 消失、设置页徽章正确显示、API 创建→刷新→数据仍在、PUT 整对象保存、状态切换 status_history 增长、DELETE 后 UI 消失，全程无 page error
 - [2026-05-15] 多 provider 重做：新增 GPT (OpenAI) 与 Claude (Anthropic) 两家服务商；前端「设置 → AI 模型配置」可改写 Key/Base URL/文本模型/视觉模型；新增「AI 功能路由」表为 6 个 AI 功能独立指定服务商；后端 `ai-config.js` 统一管理 providers/routing，services 抽象为 `{ apiKey, baseUrl, model, ... }` 统一签名，`/api/ai/*` 按 purpose 路由并自动降级；API 永不返回 Key 明文，只返回 `keyPreview`（脱敏前 4 后 4）；`.env` 中已有 Key 作为初始默认值（自动加载，前端写入会覆盖）
+- [2026-05-15] 测试连接严格化 + OpenAI 兼容：`/api/ai/text`、`/api/ai/vision` 新增 `provider`/`noFallback` 参数，前端「测试连接」不再临时改 routing，直接强制目标 provider 且失败不降级；OpenAI service 移除硬编码 `temperature` 以兼容 GPT-5 / o 系列只接受默认值的模型
+
+## get_jobs 借鉴增强阶段（2026-05-15 起）
+
+- [2026-05-15] **Phase 1.1 — AI 打招呼语 + 求职信生成**：新增 2 个 purpose（`greeting_message`、`cover_letter`）到 `ai-config.js`，默认走 deepseek；`applications` 表通过 `runMigrations()` 添加 4 列（`greeting_message`/`greeting_message_at`/`cover_letter`/`cover_letter_at`），`mappers.js` 同步映射；前端详情页 AI 公司研究下方新增两张卡片，配套 `generateGreeting` / `generateCoverLetter` 函数复用 `callTextAI` 通道；新增通用 `copyToClipboard(text, key)` 带 2 秒「✓ 已复制」反馈；设置页 AI 路由表自动多出 2 行（依赖现有 `v-for="purpose in settings.aiPurposes"`）；prompt 要求纯文本输出（无 markdown）便于直接粘贴到 Boss / 邮件场景
+- [2026-05-15] **Phase 1.2 — 求职偏好配置 + Prompt 注入**：`settings` KV 新增 `job_preferences` 项（targetPositions/targetCities/salaryMin/Max/companyTypes/urgency），后端 `normalizePreferences` 规范化；前端 `EMPTY_PREFS()` + `buildPreferencesContext()` 把偏好渲染成 prompt 上下文（无内容时返回空串）；注入到 5 个 AI 功能 prompt 末尾：interview_analysis / company_research / greeting_message / cover_letter / match_score（JD 格式化与参考答案故意不注入）；设置页 AI 模型配置上方新增「求职偏好」卡片，目标岗位/城市用顿号或逗号分隔的文本输入（`arrayTextModel` computed 双向绑定），公司类型 chip 多选，紧迫度 chip 单选；改动经现有 settings flush 链路 0.5s debounce 自动保存
+- [2026-05-15] **Phase 2.1 — Webhook 通知 + Scheduler**：新增 `server/services/notifier.js`（adapter 模式：`generic`/`wechat_work` 两个 channel），`notify(event, payload)` 主入口失败静默不阻塞业务；`server/scheduler.js` 每小时 tick 一次，09:00-10:00 窗口内发一次「每日摘要」（明天的面试 + 7+ 天未跟进、跳过已 Offer / 已挂），KV `notify_state.lastDailyAt` 去重；`applications.js` 的 `changeStatus` 在状态/轮次实际变化时 fire-and-forget 推送 `status_changed` 事件；settings KV 新增 `notify_settings`（webhookUrl/channel/events），返回前端时 URL 脱敏只保留 host + 后 6 位；`/api/notify/test` 强制发测试消息、`/api/notify/trigger-daily` 调试用绕过窗口；设置页加「Webhook 通知」卡片，URL 用 draft 单独管理避免脱敏值污染编辑（空字符串=保留旧值，`__CLEAR__` 哨兵值=清除），手动保存而非 debounce 以避免每个键击 PUT 一次
+- [2026-05-15] **Phase 2.2 — 数据统计面板**：新增 `server/routes/stats.js` 的 `/api/stats/overview`，所有聚合在 SQL 完成（按 status 分组的 5 段漏斗、近 6 个月趋势补零、Top10 公司响应率、status_history 算两段平均周转）；自定义状态归到「已投递」桶，「响应」=状态脱离待投递/已投递待回复；前端新增 `#stats` 路由 + 导航入口「数据」；引入 Chart.js 4.4.1 CDN，画水平漏斗条形图 + 月度趋势折线图，Top 公司用表格、周转用 KPI 卡；首次进页或刷新都重新 fetch + destroy 旧 chart 实例
+- [2026-05-15] **Phase 3 — 半自动 Boss JD 抓取**：新增 `server/services/scrapers/boss.js` 的 `scrapeJob(url)`（含通用 fallback），用浏览器 UA + regex 提取 `<title>` / `og:title` / `og:description` / `meta description`，按 Boss 标题常见格式（`岗位_公司_BOSS直聘`、`岗位 - 公司 - 25-40K - 直聘`）拆出 companyName/position/salary；检测「访问异常 / 安全验证」关键字和过短壳页面，置 `blocked` 标志并设清晰 `note` 引导用户切到截图 OCR；不引入 cheerio，保持零原生依赖原则；新增 `/api/scrape/job` 路由，15s 超时；前端 add 模式表单顶部加 Beta 抓取卡片，**只覆盖空字段不抢用户已有输入**；resetForm 联动清空抓取状态；Boss 反爬强，乐观情况能拿到标题，常见情况是空壳页面，兜底由现有 `jd_ocr` 截图流程承接
 
 ## 后续迭代待办
 - [ ] 投递时间线可视化
-- [ ] 统计分析面板（转化率、通过率）
+- [x] 统计分析面板（转化率、通过率）— Phase 2.2 完成
 - [ ] PWA 离线支持
 - [ ] 多设备同步（WebDAV / Gist）
 - [ ] AI Mock Interview / 题库
+- [ ] 多平台 JD 抓取（拉勾 / 猎聘 / 智联），Phase 3 已留 adapter 扩展点
+- [ ] 通知通道扩展（钉钉 / 飞书 / Slack），Phase 2.1 已留 adapter 扩展点

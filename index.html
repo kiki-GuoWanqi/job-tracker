@@ -15,6 +15,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <!-- mammoth.js — Word 文字提取 (Step 7) -->
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+  <!-- Chart.js — 统计图表 (Phase 2.2) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
   <style>
     [v-cloak] { display: none; }
@@ -686,6 +688,7 @@
           日历
           <span v-if="calendarTodayCount" class="ml-1 text-[10px] tabular bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">{{ calendarTodayCount }}</span>
         </a>
+        <a href="#stats" :class="navClass(['stats'])">数据</a>
         <a href="#offers" :class="navClass(['offers'])">
           Offer
           <span v-if="offerCount" class="ml-1 text-[10px] tabular bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">{{ offerCount }}</span>
@@ -1229,6 +1232,133 @@
       </div>
     </div>
 
+    <!-- 数据统计 -->
+    <div v-else-if="page === 'stats'" class="fade-in">
+      <div class="mb-7 flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h1 class="text-[26px] font-semibold text-zinc-900 tracking-tight flex items-center gap-3">
+            <span>📊</span>
+            <span>数据统计</span>
+          </h1>
+          <p class="text-sm text-zinc-500 mt-1">投递漏斗、月度趋势、公司响应率与平均周转</p>
+        </div>
+        <button @click="loadStats" :disabled="statsLoading" class="btn btn-sm btn-secondary">
+          <span v-if="statsLoading" class="spinner"></span>
+          刷新
+        </button>
+      </div>
+
+      <div v-if="statsError" class="card p-4 mb-4 text-rose-600 text-sm">{{ statsError }}</div>
+
+      <div v-if="statsData">
+        <!-- KPI 概览 -->
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+          <div class="card p-4">
+            <div class="text-[11px] text-zinc-500">总投递</div>
+            <div class="text-2xl font-semibold text-zinc-900 mt-1 tabular">{{ statsData.overview.totalApps }}</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[11px] text-zinc-500">活跃流程</div>
+            <div class="text-2xl font-semibold text-amber-600 mt-1 tabular">{{ statsData.overview.activePipeline }}</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[11px] text-zinc-500">Offer 数</div>
+            <div class="text-2xl font-semibold text-emerald-600 mt-1 tabular">{{ statsData.overview.offerCount }}</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[11px] text-zinc-500">整体响应率</div>
+            <div class="text-2xl font-semibold text-indigo-600 mt-1 tabular">{{ statsData.overview.overallResponseRate }}%</div>
+          </div>
+          <div class="card p-4">
+            <div class="text-[11px] text-zinc-500">Offer 率</div>
+            <div class="text-2xl font-semibold text-emerald-600 mt-1 tabular">{{ statsData.overview.offerRate }}%</div>
+          </div>
+        </div>
+
+        <!-- 漏斗 + 月度趋势 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+          <div class="card p-6">
+            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">转化漏斗</h2>
+            <div style="height: 260px;">
+              <canvas id="chart-funnel"></canvas>
+            </div>
+          </div>
+          <div class="card p-6">
+            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">近 6 个月投递趋势</h2>
+            <div style="height: 260px;">
+              <canvas id="chart-trend"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top 公司 + 状态周转时长 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="card p-6">
+            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">Top 公司响应率<span class="text-[11px] font-normal text-zinc-400 ml-2">（投递≥2 家）</span></h2>
+            <div v-if="!statsData.topCompanies.length" class="text-[13px] text-zinc-500 py-6 text-center">
+              暂无重复投递的公司
+            </div>
+            <table v-else class="w-full text-[13px]">
+              <thead class="text-[11px] text-zinc-500">
+                <tr>
+                  <th class="text-left pb-2">公司</th>
+                  <th class="text-right pb-2 tabular">投递</th>
+                  <th class="text-right pb-2 tabular">有响应</th>
+                  <th class="text-right pb-2 tabular">响应率</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in statsData.topCompanies" :key="c.company" class="border-t border-zinc-100">
+                  <td class="py-1.5 text-zinc-800">{{ c.company }}</td>
+                  <td class="text-right tabular text-zinc-700">{{ c.total }}</td>
+                  <td class="text-right tabular text-zinc-700">{{ c.responded }}</td>
+                  <td class="text-right tabular"
+                      :class="c.rate >= 50 ? 'text-emerald-600' : c.rate > 0 ? 'text-amber-600' : 'text-zinc-400'">
+                    {{ c.rate }}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card p-6">
+            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">平均周转时长</h2>
+            <div class="space-y-4">
+              <div>
+                <div class="flex items-baseline justify-between mb-1">
+                  <span class="text-[12px] text-zinc-500">投递 → 首次响应</span>
+                  <span class="text-[11px] text-zinc-400 tabular">样本 {{ statsData.timing.submitToResponse.count }} 条</span>
+                </div>
+                <div class="text-2xl font-semibold text-zinc-900 tabular">
+                  {{ statsData.timing.submitToResponse.avgDays !== null ? statsData.timing.submitToResponse.avgDays + ' 天' : '—' }}
+                </div>
+              </div>
+              <div class="border-t border-zinc-100"></div>
+              <div>
+                <div class="flex items-baseline justify-between mb-1">
+                  <span class="text-[12px] text-zinc-500">首次响应 → Offer / 拒</span>
+                  <span class="text-[11px] text-zinc-400 tabular">样本 {{ statsData.timing.responseToFinal.count }} 条</span>
+                </div>
+                <div class="text-2xl font-semibold text-zinc-900 tabular">
+                  {{ statsData.timing.responseToFinal.avgDays !== null ? statsData.timing.responseToFinal.avgDays + ' 天' : '—' }}
+                </div>
+              </div>
+              <p class="text-[11px] text-zinc-400 pt-2 leading-relaxed">
+                基于「状态变更时间轴」聚合，过滤异常值（&lt;0 或 &gt;365 天）。样本越多越可靠。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="!statsLoading" class="card p-16 text-center">
+        <div class="w-14 h-14 rounded-2xl bg-zinc-100 mx-auto mb-4 flex items-center justify-center text-2xl">📊</div>
+        <p class="text-zinc-900 font-medium mb-1">还没有统计数据</p>
+        <p class="text-zinc-500 text-sm mb-5">添加几条投递后，这里会出现漏斗、趋势和响应率</p>
+        <a href="#add" class="btn btn-primary">添加第一条投递</a>
+      </div>
+    </div>
+
     <!-- 添加 / 编辑表单 -->
     <div v-else-if="page === 'add' || page === 'edit'" class="fade-in">
       <div class="flex items-center justify-between mb-7">
@@ -1245,6 +1375,28 @@
       </div>
 
       <div class="space-y-4">
+        <!-- 半自动 JD 抓取（仅添加时显示） -->
+        <section v-if="page === 'add'" class="card p-5 border border-dashed border-cyan-200/80 bg-gradient-to-br from-cyan-50/40 to-transparent">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="icon-chip text-white" style="background: linear-gradient(135deg, #06b6d4 0%, #6366f1 100%);">🔗</span>
+            <div>
+              <h2 class="text-[14px] font-semibold text-zinc-900">从 URL 抓取（Beta · Boss 直聘）</h2>
+              <p class="text-[11.5px] text-zinc-500 mt-0.5">粘贴岗位详情页链接，自动预填公司/岗位/薪资/JD 摘要。抓不全的字段用截图导入兜底。</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <input v-model="scrapeUrl" type="url"
+                   placeholder="https://www.zhipin.com/job_detail/..."
+                   class="field flex-1" />
+            <button @click="scrapeFromUrl" :disabled="scrapeLoading" class="btn btn-sm btn-primary">
+              <span v-if="scrapeLoading" class="spinner"></span>
+              {{ scrapeLoading ? '抓取中' : '抓取' }}
+            </button>
+          </div>
+          <p v-if="scrapeError" class="text-xs text-rose-500 mt-2">{{ scrapeError }}</p>
+          <p v-if="scrapeNote" class="text-xs text-zinc-500 mt-2">{{ scrapeNote }}</p>
+        </section>
+
         <!-- 基础信息 -->
         <section class="card p-6">
           <div class="flex items-center justify-between mb-5">
@@ -1836,6 +1988,82 @@
             </p>
           </div>
 
+          <!-- AI 打招呼语 -->
+          <div class="card p-6 relative overflow-hidden">
+            <div class="absolute -top-12 -right-12 w-44 h-44 rounded-full pointer-events-none"
+                 style="background: radial-gradient(circle, rgba(34,197,94,0.12) 0%, transparent 70%);"></div>
+            <div class="flex items-center justify-between mb-3 relative">
+              <div class="flex items-center gap-2.5">
+                <span class="icon-chip" style="background: rgba(34,197,94,0.12); color: rgb(34,197,94);">👋</span>
+                <div>
+                  <h3 class="text-[15px] font-semibold text-zinc-900">AI 打招呼语</h3>
+                  <p class="text-[11px] text-zinc-400 mt-0.5">Boss / 猎聘等平台主动开场用，80-150 字</p>
+                </div>
+              </div>
+              <button @click="generateGreeting(currentApp.id)"
+                      :disabled="greetingLoading[currentApp.id]"
+                      class="btn btn-sm" :class="greetingLoading[currentApp.id] ? 'btn-secondary' : 'btn-primary'">
+                <span v-if="greetingLoading[currentApp.id]" class="spinner"></span>
+                <span v-else>✨</span>
+                {{ greetingLoading[currentApp.id] ? '生成中' : (currentApp.greetingMessage ? '重新生成' : '生成') }}
+              </button>
+            </div>
+            <div v-if="currentApp.greetingMessage" class="space-y-2">
+              <p class="text-[13.5px] text-zinc-800 leading-relaxed whitespace-pre-wrap bg-zinc-50 rounded-lg p-3 border border-zinc-200">{{ currentApp.greetingMessage }}</p>
+              <div class="flex items-center justify-between">
+                <button @click="copyToClipboard(currentApp.greetingMessage, 'greeting:' + currentApp.id)"
+                        class="btn btn-sm btn-secondary">
+                  {{ copyFlash['greeting:' + currentApp.id] ? '✓ 已复制' : '📋 复制' }}
+                </button>
+                <span v-if="currentApp.greetingMessageAt" class="text-[11px] text-zinc-400 tabular">
+                  生成于 {{ currentApp.greetingMessageAt.slice(0, 10) }}
+                </span>
+              </div>
+            </div>
+            <div v-else class="py-6 text-center text-sm text-zinc-500">
+              点击「生成」，AI 会基于 JD + 简历生成贴合岗位的开场白
+            </div>
+            <p v-if="greetingError[currentApp.id]" class="text-xs text-rose-500 mt-2">{{ greetingError[currentApp.id] }}</p>
+          </div>
+
+          <!-- AI 求职信 -->
+          <div class="card p-6 relative overflow-hidden">
+            <div class="absolute -top-12 -right-12 w-44 h-44 rounded-full pointer-events-none"
+                 style="background: radial-gradient(circle, rgba(168,85,247,0.12) 0%, transparent 70%);"></div>
+            <div class="flex items-center justify-between mb-3 relative">
+              <div class="flex items-center gap-2.5">
+                <span class="icon-chip" style="background: rgba(168,85,247,0.12); color: rgb(168,85,247);">✉️</span>
+                <div>
+                  <h3 class="text-[15px] font-semibold text-zinc-900">AI 求职信</h3>
+                  <p class="text-[11px] text-zinc-400 mt-0.5">邮件 / 在线表单使用，约 300 字</p>
+                </div>
+              </div>
+              <button @click="generateCoverLetter(currentApp.id)"
+                      :disabled="coverLetterLoading[currentApp.id]"
+                      class="btn btn-sm" :class="coverLetterLoading[currentApp.id] ? 'btn-secondary' : 'btn-primary'">
+                <span v-if="coverLetterLoading[currentApp.id]" class="spinner"></span>
+                <span v-else>✨</span>
+                {{ coverLetterLoading[currentApp.id] ? '生成中' : (currentApp.coverLetter ? '重新生成' : '生成') }}
+              </button>
+            </div>
+            <div v-if="currentApp.coverLetter" class="space-y-2">
+              <p class="text-[13.5px] text-zinc-800 leading-relaxed whitespace-pre-wrap bg-zinc-50 rounded-lg p-3 border border-zinc-200">{{ currentApp.coverLetter }}</p>
+              <div class="flex items-center justify-between">
+                <button @click="copyToClipboard(currentApp.coverLetter, 'cover:' + currentApp.id)"
+                        class="btn btn-sm btn-secondary">
+                  {{ copyFlash['cover:' + currentApp.id] ? '✓ 已复制' : '📋 复制' }}
+                </button>
+                <span v-if="currentApp.coverLetterAt" class="text-[11px] text-zinc-400 tabular">
+                  生成于 {{ currentApp.coverLetterAt.slice(0, 10) }}
+                </span>
+              </div>
+            </div>
+            <div v-else class="py-6 text-center text-sm text-zinc-500">
+              点击「生成」，AI 会基于 JD + 简历撰写一封简短的求职信
+            </div>
+            <p v-if="coverLetterError[currentApp.id]" class="text-xs text-rose-500 mt-2">{{ coverLetterError[currentApp.id] }}</p>
+          </div>
+
           <!-- 公司简介 + 备注 双栏 -->
           <div v-if="currentApp.companyBrief || currentApp.notes" class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div v-if="currentApp.companyBrief" class="card p-5">
@@ -2213,6 +2441,187 @@
       </div>
 
       <div class="space-y-4">
+        <!-- 求职偏好 -->
+        <section class="card p-6">
+          <div class="flex items-start justify-between mb-5">
+            <div>
+              <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
+                <span class="icon-chip text-white"
+                      style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);">
+                  🎯
+                </span>
+                求职偏好
+              </h2>
+              <p class="text-[12.5px] text-zinc-500 mt-1.5">
+                填一次，所有 AI 功能（匹配评分 / 面试建议 / 公司研究 / 打招呼语 / 求职信）会自动用作上下文。全部可选，留空就不注入。
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <!-- 目标岗位 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">目标岗位</label>
+              <input v-model="prefPositionsText" type="text"
+                     placeholder="如：前端工程师、全栈开发（用顿号或逗号分隔多项）"
+                     class="w-full px-3 py-2 text-[13px] border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
+            </div>
+
+            <!-- 目标城市 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">目标城市</label>
+              <input v-model="prefCitiesText" type="text"
+                     placeholder="如：杭州、上海、远程"
+                     class="w-full px-3 py-2 text-[13px] border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
+            </div>
+
+            <!-- 期望薪资 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">期望薪资（K / 月）</label>
+              <div class="flex items-center gap-2">
+                <input v-model.number="settings.jobPreferences.salaryMin" type="number" min="0"
+                       placeholder="下限"
+                       class="w-24 px-3 py-2 text-[13px] border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
+                <span class="text-zinc-400">—</span>
+                <input v-model.number="settings.jobPreferences.salaryMax" type="number" min="0"
+                       placeholder="上限"
+                       class="w-24 px-3 py-2 text-[13px] border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
+                <span class="text-[12px] text-zinc-500">K / 月</span>
+              </div>
+            </div>
+
+            <!-- 公司类型偏好 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">偏好公司类型（可多选）</label>
+              <div class="flex flex-wrap gap-2">
+                <button v-for="opt in COMPANY_TYPE_OPTIONS" :key="opt"
+                        type="button"
+                        @click="togglePrefCompanyType(opt)"
+                        class="px-3 py-1.5 text-[12.5px] rounded-full border transition"
+                        :class="(settings.jobPreferences.companyTypes || []).includes(opt)
+                          ? 'bg-amber-50 border-amber-300 text-amber-700'
+                          : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'">
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 紧迫度 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">求职紧迫度</label>
+              <div class="flex gap-2">
+                <button v-for="opt in URGENCY_OPTIONS" :key="opt"
+                        type="button"
+                        @click="settings.jobPreferences.urgency = (settings.jobPreferences.urgency === opt ? '' : opt)"
+                        class="px-3 py-1.5 text-[12.5px] rounded-full border transition"
+                        :class="settings.jobPreferences.urgency === opt
+                          ? 'bg-amber-50 border-amber-300 text-amber-700'
+                          : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'">
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+
+            <p class="text-[11px] text-zinc-400 pt-1">
+              改动会在 0.5 秒后自动保存（与其他设置同机制）
+            </p>
+          </div>
+        </section>
+
+        <!-- Webhook 通知 -->
+        <section class="card p-6">
+          <div class="flex items-start justify-between mb-5">
+            <div>
+              <h2 class="text-[15px] font-semibold text-zinc-900 flex items-center gap-2.5">
+                <span class="icon-chip text-white"
+                      style="background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);">
+                  🔔
+                </span>
+                Webhook 通知
+              </h2>
+              <p class="text-[12.5px] text-zinc-500 mt-1.5">
+                投递状态变更实时推送，每天 09:00 汇总「明天的面试 + 7 天未跟进」。改动需点击「保存」生效。
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <!-- 通道 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">通道</label>
+              <select v-model="notifyDraft.channel"
+                      class="w-full px-3 py-2 text-[13px] border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-400 bg-white">
+                <option v-for="c in settings.notifyChannels" :key="c.key" :value="c.key">{{ c.label }}</option>
+              </select>
+              <p class="text-[11px] text-zinc-400 mt-1">
+                通用 = 后端直接 POST JSON；企业微信 = 自动包装成机器人 markdown 消息
+              </p>
+            </div>
+
+            <!-- URL -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">Webhook URL</label>
+              <div class="flex items-center gap-2">
+                <input v-model="notifyDraft.webhookUrl"
+                       :type="notifyShow ? 'text' : 'password'"
+                       :placeholder="settings.notifySettings.hasUrl
+                         ? `已配置 · ${settings.notifySettings.urlHost || ''} · …${settings.notifySettings.urlTail || ''}（留空保留）`
+                         : '粘贴你的 Webhook URL'"
+                       class="flex-1 px-3 py-2 text-[13px] border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-400" />
+                <button type="button" @click="notifyShow = !notifyShow"
+                        class="btn btn-sm btn-secondary">
+                  {{ notifyShow ? '隐藏' : '显示' }}
+                </button>
+              </div>
+              <p v-if="settings.notifySettings.hasUrl" class="text-[11px] text-zinc-400 mt-1">
+                当前 host：{{ settings.notifySettings.urlHost || '（未识别）' }}
+              </p>
+            </div>
+
+            <!-- 事件订阅 -->
+            <div>
+              <label class="block text-[12px] font-medium text-zinc-700 mb-1.5">订阅事件</label>
+              <div class="space-y-2">
+                <label v-for="ev in settings.notifyEvents" :key="ev.key"
+                       class="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox"
+                         :checked="notifyDraft.events[ev.key]"
+                         @change="notifyDraft.events[ev.key] = $event.target.checked"
+                         class="mt-0.5" />
+                  <span class="text-[13px] text-zinc-700">{{ ev.label }}</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 操作 -->
+            <div class="flex items-center gap-2 pt-2">
+              <button @click="saveNotifyConfig" :disabled="notifySaveLoading"
+                      class="btn btn-sm btn-primary">
+                <span v-if="notifySaveLoading" class="spinner"></span>
+                {{ notifySaveLoading ? '保存中' : '保存' }}
+              </button>
+              <button @click="testNotify" :disabled="notifyTestLoading"
+                      class="btn btn-sm btn-secondary">
+                <span v-if="notifyTestLoading" class="spinner"></span>
+                {{ notifyTestLoading ? '发送中' : '测试发送' }}
+              </button>
+              <button v-if="settings.notifySettings.hasUrl"
+                      @click="clearNotifyUrl"
+                      class="btn btn-sm text-rose-600">
+                清除 URL
+              </button>
+            </div>
+            <p v-if="notifySaveResult" class="text-xs mt-1"
+               :class="notifySaveResult.startsWith('✓') ? 'text-emerald-600' : 'text-rose-500'">
+              {{ notifySaveResult }}
+            </p>
+            <p v-if="notifyTestResult" class="text-xs mt-1"
+               :class="notifyTestResult.startsWith('✓') ? 'text-emerald-600' : 'text-rose-500'">
+              {{ notifyTestResult }}
+            </p>
+          </div>
+        </section>
+
         <!-- AI 模型配置 -->
         <section class="card p-6">
           <div class="flex items-start justify-between mb-5">

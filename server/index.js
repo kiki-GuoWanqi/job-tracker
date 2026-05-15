@@ -10,6 +10,10 @@ import settingsRouter from './routes/settings.js';
 import resumesRouter from './routes/resumes.js';
 import aiRouter from './routes/ai.js';
 import backupRouter from './routes/backup.js';
+import notifyRouter from './routes/notify.js';
+import statsRouter from './routes/stats.js';
+import scrapeRouter from './routes/scrape.js';
+import { startScheduler } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +37,9 @@ app.use('/api/applications', applicationsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/resumes', resumesRouter);
 app.use('/api/backup', backupRouter);
+app.use('/api/notify', notifyRouter);
+app.use('/api/stats', statsRouter);
+app.use('/api/scrape', scrapeRouter);
 
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -59,4 +66,5 @@ app.listen(PORT, HOST, () => {
   if (!process.env.DEEPSEEK_API_KEY && !process.env.QWEN_API_KEY) {
     console.warn('[warn] 未在 .env 配置 DEEPSEEK_API_KEY 或 QWEN_API_KEY，AI 功能将不可用');
   }
+  startScheduler();
 });

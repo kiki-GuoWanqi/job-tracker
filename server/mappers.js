@@ -36,6 +36,10 @@ const APPLICATION_COLUMNS = [
   ['next_interview_date', 'nextInterviewDate'],
   ['offer_deadline', 'offerDeadline'],
   ['notes', 'notes'],
+  ['greeting_message', 'greetingMessage'],
+  ['greeting_message_at', 'greetingMessageAt'],
+  ['cover_letter', 'coverLetter'],
+  ['cover_letter_at', 'coverLetterAt'],
   ['created_at', 'createdAt'],
   ['updated_at', 'updatedAt']
 ];

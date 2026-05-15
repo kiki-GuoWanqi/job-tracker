@@ -46,6 +46,8 @@ export const AI_PURPOSES = [
   { key: 'ref_answer',         label: '面试参考答案',      kind: 'text'   },
   { key: 'match_score',        label: '简历匹配评分',      kind: 'text'   },
   { key: 'company_research',   label: 'AI 公司研究',      kind: 'text'   },
+  { key: 'greeting_message',   label: '打招呼语生成',      kind: 'text'   },
+  { key: 'cover_letter',       label: '求职信生成',        kind: 'text'   },
   { key: 'jd_ocr',             label: 'JD 截图识别',      kind: 'vision' },
   { key: 'connection_test',    label: '连接测试',         kind: 'text'   }
 ];
@@ -56,6 +58,8 @@ export const DEFAULT_ROUTING = {
   ref_answer:         'deepseek',
   match_score:        'deepseek',
   company_research:   'deepseek',
+  greeting_message:   'deepseek',
+  cover_letter:       'deepseek',
   jd_ocr:             'qwen',
   connection_test:    'deepseek'
 };
