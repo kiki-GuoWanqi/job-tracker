@@ -130,13 +130,43 @@ type Application = {
   applicationDate: string   // ISO 日期 YYYY-MM-DD
   status: string            // 预设或自定义
   interviewRound: string    // 当前面试轮次（一面/二面/三面/其他面），仅 status=面试中 时有意义
-  companyBrief: string      // 公司简介，纯文本
-  jdRaw: string             // 原始粘贴的 JD
-  jdFormatted: string       // AI 格式化后的 Markdown
-  aiAnalysis: string        // AI 面试建议 Markdown
+  workCity?: string         // 工作城市
+  companyBrief?: string     // 公司简介手写笔记，纯文本
+  notes?: string            // 备注
+  offerSalary?: string      // Offer 薪资（已 Offer 时填写）
+  jdRaw?: string            // 原始粘贴的 JD
+  jdFormatted?: string      // AI 格式化后的 Markdown
+
+  // 关键时间
+  examDate?: string         // 笔试日期
+  nextInterviewDate?: string
+  offerDeadline?: string    // Offer 截止时间
+
+  // AI 相关
+  resumeId?: string         // 关联到 Settings.resumes 中某份简历
+  aiAnalysis?: string       // AI 面试建议 Markdown
+  matchScore?: number       // 0-100 整数，AI 简历×JD 匹配度
+  matchSummary?: string
+  matchStrengths?: string[]
+  matchGaps?: string[]
+  matchRecommendation?: string
+  matchScoreAt?: string     // ISO timestamp
+  matchResumeId?: string    // 评分时所用简历 id（用于失效判断）
+  companyResearch?: string  // AI 公司研究 Markdown（6 维度）
+  companyResearchAt?: string
+
+  // 子集合
   interviews: Interview[]
+  tasks?: Task[]            // 任务清单（截止+完成）
+  statusHistory?: StatusChange[]  // 状态变更时间轴（自动维护）
   createdAt: string         // ISO timestamp
   updatedAt: string
+}
+
+type StatusChange = {
+  status: string            // 变更后的状态
+  round: string             // 当时的面试轮次（仅 status=面试中 时有值）
+  changedAt: string         // ISO timestamp
 }
 
 type Interview = {
@@ -151,14 +181,40 @@ type Question = {
   id: string
   question: string
   answer: string
+  refAnswer?: string        // AI 生成的参考答案
+}
+
+type Task = {
+  id: string
+  content: string           // 任务内容
+  dueAt: string             // YYYY-MM-DD，空字符串表示无截止
+  done: boolean
+  createdAt: string         // ISO timestamp
 }
 
 // 存储 key：jobtracker_settings
 type Settings = {
   deepseekApiKey: string
-  resumeText: string        // PDF/Word 提取后的纯文本
+  qwenApiKey: string
+
+  // 多简历
+  resumes: Resume[]
+  defaultResumeId: string
+
+  // 兼容字段（旧版本单简历，仅迁移用）
+  resumeText: string
   resumeFileName: string
+
   customStatuses: string[]
+}
+
+type Resume = {
+  id: string
+  label: string             // 用户命名，如「算法岗版」「前端岗版」
+  fileName: string
+  text: string              // 提取后的纯文本
+  createdAt: string
+  updatedAt: string
 }
 ```
 

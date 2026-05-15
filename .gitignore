@@ -1,2 +1,10 @@
 .claude/settings.local.json
 .claude/settings.json
+
+# 后端
+node_modules/
+.env
+data/
+*.db
+*.db-wal
+*.db-shm

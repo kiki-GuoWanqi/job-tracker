@@ -1,86 +1,159 @@
-# 架构地图 — JobTracker
+# 架构地图 — JobTracker v2（前后端版）
 
 ## 部署信息
-- **在线地址**：`https://kiki-guoWanqi.github.io/job-tracker/`
-- **GitHub 仓库**：`https://github.com/kiki-GuoWanqi/job-tracker`
-- **部署方式**：GitHub Pages，main 分支自动部署
-- **状态**：v1.0 已完成并上线
+- **运行方式**：本机 `npm start` 一键启动，监听 `http://127.0.0.1:3000`
+- **状态**：v2.0 改造完成（前后端 + SQLite + AI 代理）
+- **节点版本要求**：Node.js ≥ 22.5（使用 `node:sqlite` 内置模块，避免编译原生依赖）
 
 ---
 
 ## 文件结构（当前态）
 
 ```
-D:\vibecoding_seekjob\
-├── index.html                      ← 唯一应用文件，全部 HTML/CSS/JS（~1860 行）
-├── README.md                       ← 仓库门面，面向 HR 的项目展示
-├── PRD.md                          ← 完整产品需求文档
-├── .gitignore                      ← 排除 .claude/settings*.json
-├── CLAUDE.md                       ← Agent 工作流配置
-└── memory-bank/
-    ├── design-document.md           ← 功能设计、数据模型、验收标准
-    ├── tech-stack.md                ← 技术选型与理由
-    ├── implementation-plan.md       ← 11 步实施计划（全部完成）
-    ├── progress.md                  ← 执行日志
-    └── architecture.md              ← 本文件，当前架构地图
+job-tracker/
+├── index.html                  ← 模板 + CDN 引入，挂载点 #app
+├── assets/
+│   ├── api.js                  ← fetch 封装层（applications/settings/resumes/ai/backup）
+│   └── app.js                  ← Vue 应用逻辑（业务核心，从 index.html 抽出）
+├── server/
+│   ├── index.js                ← Express 入口（绑 127.0.0.1，挂 /api/* + 静态资源）
+│   ├── db.js                   ← node:sqlite 单例 + WAL + 启动建表
+│   ├── schema.sql              ← DDL（4 张表 + 1 个索引）
+│   ├── mappers.js              ← snake_case↔camelCase + JSON 列序列化
+│   ├── routes/
+│   │   ├── applications.js     ← /api/applications CRUD + /:id/status
+│   │   ├── settings.js         ← /api/settings GET/PUT（返回 aiProviders 脱敏 + aiRouting + aiPurposes）
+│   │   ├── resumes.js          ← /api/resumes CRUD
+│   │   ├── ai.js               ← /api/ai/text + /api/ai/vision（按 routing[purpose] 分发，含降级）
+│   │   └── backup.js           ← /api/backup/export + /import
+│   ├── ai-config.js            ← AI provider 默认值 / purposes 定义 / routing 读写 / resolveCallTarget
+│   └── services/
+│       ├── ai-deepseek.js      ← DeepSeek（OpenAI 兼容）
+│       ├── ai-qwen.js          ← 千问（DashScope 兼容模式）
+│       ├── ai-openai.js        ← OpenAI GPT
+│       └── ai-anthropic.js     ← Anthropic Claude（messages API，与 OpenAI 协议不同）
+├── data/                       ← gitignore
+│   └── jobtracker.db           ← SQLite 文件（WAL）
+├── .env / .env.example         ← API Key + 端口配置
+├── .gitignore
+├── package.json                ← scripts.start = "node --no-warnings=ExperimentalWarning server/index.js"
+├── README.md
+└── memory-bank/                ← 设计与进度文档
 ```
 
 ---
 
-## index.html 内部结构
+## 数据流
 
+### 持久化路径
 ```
-<html>
-  <head>
-    CDN: Tailwind CSS, Vue 3, marked.js, PDF.js, mammoth.js
-    <style> prose 样式、v-cloak </style>
-  </head>
-  <body>
-    <div id="app" v-cloak>
-      <!-- 全局遮罩层 -->
-      <!-- 顶部导航栏（列表 / 设置） -->
-      <!-- Hash 路由容器：list / add / edit / detail / review / settings -->
-    </div>
-    <script>
-      // 1. 常量定义（状态预设、轮次选项、颜色映射）
-      // 2. 数据层 — localStorage 读写（纯函数）
-      //    - STORAGE.APPS / STORAGE.SETTINGS
-      //    - loadApplications / saveApplications
-      //    - loadSettings / saveSettings
-      // 3. PDF.js / mammoth.js 文字提取
-      // 4. AI 调用层
-      //    - callDeepSeek / callTextAI（DeepSeek 优先，千问降级）
-      //    - extractJDFromImage（千问 VL 优先，DeepSeek 降级）
-      //    - JD 格式化 / AI 面试分析 / 参考答案生成
-      // 5. Vue 3 createApp（单实例，全部响应式状态 + 方法）
-      //    - Hash 路由解析
-      //    - 列表筛选（状态 / 轮次 / 搜索）
-      //    - 状态徽章 picker（状态 + 轮次 + Offer 薪资）
-      //    - 面经 CRUD（内联表单，动态题目增删）
-      //    - 设置页（API Key / 简历上传 / 自定义状态 / 数据备份）
-      //    - 面试前浏览（自测模式）
-      //    - 表单校验 + 保存 / 编辑 / 删除
-    </script>
-  </body>
-</html>
+前端 mutation → Vue watch (deep)
+  ↓
+diff 出 dirty applications（按 id 序列化对比）
+  ↓
+500ms debounce → 逐个 PUT /api/applications/:id
+  ↓
+后端 mapper：camel → snake + JSON.stringify
+  ↓
+SQLite (WAL) 落盘
 ```
 
-## localStorage Keys
-- `jobtracker_applications` — Application[] JSON（投递列表 + 嵌套面经）
-- `jobtracker_settings` — Settings JSON（API Key、简历文本、文件名、自定义状态）
+显式操作（新建、删除、状态切换）走专用 endpoint，绕过 debounce：
+- 新建：`POST /api/applications`
+- 删除：`DELETE /api/applications/:id`
+- 状态切换：`POST /api/applications/:id/status`（同步追加 status_history）
 
-## CDN 依赖（版本锁定）
+### AI 调用路径
+```
+前端调用 callTextAI(system, user, purpose)
+  ↓
+POST /api/ai/text  body { system, user, purpose }
+  ↓
+resolveCallTarget(purpose) 读 ai_routing[purpose] → 选定 provider + apiKey + baseUrl + model
+  ↓
+services/ai-{deepseek|qwen|openai|anthropic}.js
+  ↓ AbortController 90s 超时
+对应服务商 API
+  ↓
+失败 → 自动降级到任何其他有 Key 的 provider（视觉只在 supportsVision 的 provider 之间降级）
+  ↓
+返回 { content, provider, fallback? }
+```
+
+视觉走 `/api/ai/vision` 同样流程，purpose 为 `jd_ocr`，默认路由到千问 VL。
+
+---
+
+## 数据库 Schema
+
+4 张表：
+
+| 表 | 说明 |
+|---|---|
+| `applications` | 投递主表，数组字段（interviews/tasks/matchStrengths/matchGaps）作为 JSON 列存储 |
+| `status_history` | 状态变更时间线，独立表（外键级联删） |
+| `resumes` | 简历主表（id/label/fileName/text/timestamps） |
+| `settings` | KV 表：`default_resume_id`、`custom_statuses`、`ai_providers`（4 家 Key/baseUrl/textModel/visionModel JSON）、`ai_routing`（7 个 purpose → providerKey 映射） |
+
+**为什么混合 JSON 列**：单用户量级几百条，前端把 Application 当胖对象操作，完全 normalize 会让前端改大量代码且无查询收益。
+
+**为什么 status_history 独立**：天然时间序列，未来可支持「全局状态变更看板」视图。
+
+---
+
+## API 端点表
+
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/api/health` | GET | 健康检查 |
+| `/api/applications` | GET / POST | 列表 / 创建 |
+| `/api/applications/:id` | GET / PUT / DELETE | 单条 CRUD |
+| `/api/applications/:id/status` | POST | 状态切换（含 status_history） |
+| `/api/resumes` | GET / POST | 简历列表 / 创建 |
+| `/api/resumes/:id` | GET / PUT / DELETE | 简历 CRUD |
+| `/api/settings` | GET / PUT | 设置（**永不返回 Key 明文**，返回 hasDeepseekKey / hasQwenKey 布尔） |
+| `/api/ai/text` | POST | 文本代理，body `{ system, user, purpose }` → `{ content, provider }` |
+| `/api/ai/vision` | POST | 视觉代理，body `{ prompt, base64, mimeType, purpose }` |
+| `/api/backup/export` | GET | 完整 JSON（兼容 v1 导出格式） |
+| `/api/backup/import` | POST | 事务全清重建 |
+
+---
+
+## 前端关键模块（assets/app.js）
+
+- **STORAGE 层**：debounced + dirty-set（`lastSentByAppId` Map + `dirtySet` Set + 500ms `flushTimer`）
+- **AI 层**：`callTextAI(systemPrompt, userContent, purpose)` 与 `extractJDFromImage(base64, mimeType)` 内部走 `JobTrackerAPI.ai.*`
+- **AI Key 检测**：`hasAnyKey()` 读 `settings.hasDeepseekKey || settings.hasQwenKey`（来自后端响应）
+- **localStorage 兼容**：`jobtracker_notified_v1`（桌面通知去重表）仍存浏览器；其余字段已迁移
+- **迁移弹窗**：首次启动若检测到 `jobtracker_applications` 非空且后端为空，弹模态触发 `/api/backup/import`，迁移后原 key 改名为 `*_migrated_<ts>`
+- **路由**：Hash 路由，与 v1 完全一致（`#list / #add / #edit / #detail / #review / #settings / #offers / #archived / #calendar`）
+
+---
+
+## CDN 依赖（前端，版本锁定）
+
 | 库 | 版本 | 用途 |
 |---|------|------|
 | tailwindcss | CDN play | 原子化样式 |
 | vue | 3.4.21 | 响应式框架 |
 | marked | 9.1.6 | Markdown 渲染 |
-| pdf.js | 3.11.174 | PDF 文字提取 |
-| mammoth | 1.6.0 | Word .docx 文字提取 |
+| pdf.js | 3.11.174 | PDF 文字提取（浏览器端） |
+| mammoth | 1.6.0 | Word .docx 文字提取（浏览器端） |
 
-## AI 降级策略
-```
-文本任务：DeepSeek API → 千问 qwen-plus（降级）
-图片任务：千问 qwen-vl-plus → DeepSeek（降级）
-均未配置 → 引导用户前往设置页
-```
+## NPM 依赖（后端）
+
+| 库 | 版本 | 用途 |
+|---|------|------|
+| express | ^4.21.0 | HTTP 服务 |
+| dotenv | ^16.4.5 | .env 加载 |
+| express-rate-limit | ^7.4.0 | AI 端点限流 |
+| **（无原生编译依赖）** | | SQLite 用 Node 内置 `node:sqlite` |
+
+---
+
+## 安全姿态
+
+- 进程默认绑 `127.0.0.1`（仅本机），避免 AI 代理被滥用
+- `/api/ai/*` 接口加 60 req/min 限流（可配）
+- API Key 仅在 `.env`，前后端响应均不暴露明文
+- `.env` 与 `data/` 已加入 `.gitignore`
