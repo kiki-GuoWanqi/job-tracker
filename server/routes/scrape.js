@@ -1,7 +1,11 @@
 import { Router } from 'express';
-import { scrapeJob } from '../services/scrapers/boss.js';
+import { scrapeJob, SUPPORTED_PLATFORMS } from '../services/scrapers/index.js';
 
 const router = Router();
+
+router.get('/platforms', (_req, res) => {
+  res.json(SUPPORTED_PLATFORMS);
+});
 
 function withTimeout(ms = 15_000) {
   const ctl = new AbortController();

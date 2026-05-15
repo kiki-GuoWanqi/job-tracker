@@ -69,6 +69,7 @@ window.JobTrackerAPI = {
   },
 
   scrape: {
-    job: (url) => request('POST', '/scrape/job', { url })
+    job: (url) => request('POST', '/scrape/job', { url }),
+    platforms: () => request('GET', '/scrape/platforms')
   }
 };

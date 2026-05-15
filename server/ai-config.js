@@ -48,6 +48,7 @@ export const AI_PURPOSES = [
   { key: 'company_research',   label: 'AI 公司研究',      kind: 'text'   },
   { key: 'greeting_message',   label: '打招呼语生成',      kind: 'text'   },
   { key: 'cover_letter',       label: '求职信生成',        kind: 'text'   },
+  { key: 'jd_extract',         label: 'JD 文本结构化提取',  kind: 'text'   },
   { key: 'jd_ocr',             label: 'JD 截图识别',      kind: 'vision' },
   { key: 'connection_test',    label: '连接测试',         kind: 'text'   }
 ];
@@ -60,6 +61,7 @@ export const DEFAULT_ROUTING = {
   company_research:   'deepseek',
   greeting_message:   'deepseek',
   cover_letter:       'deepseek',
+  jd_extract:         'deepseek',
   jd_ocr:             'qwen',
   connection_test:    'deepseek'
 };

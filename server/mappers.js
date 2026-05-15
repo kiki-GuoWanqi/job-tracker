@@ -40,9 +40,12 @@ const APPLICATION_COLUMNS = [
   ['greeting_message_at', 'greetingMessageAt'],
   ['cover_letter', 'coverLetter'],
   ['cover_letter_at', 'coverLetterAt'],
+  ['display_order', 'displayOrder'],
   ['created_at', 'createdAt'],
   ['updated_at', 'updatedAt']
 ];
+
+const NUMERIC_NULLABLE_FIELDS = new Set(['matchScore', 'displayOrder']);
 
 export const APP_DB_COLUMNS = APPLICATION_COLUMNS.map(([db]) => db);
 
@@ -54,7 +57,7 @@ export function rowToApplication(row, statusHistory = []) {
     if (JSON_FIELDS.has(camel)) {
       try { v = v ? JSON.parse(v) : []; } catch { v = []; }
     }
-    out[camel] = v ?? (JSON_FIELDS.has(camel) ? [] : (camel === 'matchScore' ? null : ''));
+    out[camel] = v ?? (JSON_FIELDS.has(camel) ? [] : (NUMERIC_NULLABLE_FIELDS.has(camel) ? null : ''));
   }
   out.statusHistory = statusHistory.map(h => ({
     status: h.status || '',
@@ -71,7 +74,7 @@ export function applicationToRow(app) {
     if (JSON_FIELDS.has(camel)) {
       v = JSON.stringify(Array.isArray(v) ? v : []);
     } else if (v === undefined || v === null) {
-      v = camel === 'matchScore' ? null : '';
+      v = NUMERIC_NULLABLE_FIELDS.has(camel) ? null : '';
     }
     row[db] = v;
   }

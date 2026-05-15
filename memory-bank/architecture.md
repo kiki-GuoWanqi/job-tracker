@@ -147,7 +147,7 @@ services/ai-{deepseek|qwen|openai|anthropic}.js
 - **AI Key 检测**：`hasAnyKey()` 读 `settings.hasDeepseekKey || settings.hasQwenKey`（来自后端响应）
 - **localStorage 兼容**：`jobtracker_notified_v1`（桌面通知去重表）仍存浏览器；其余字段已迁移
 - **迁移弹窗**：首次启动若检测到 `jobtracker_applications` 非空且后端为空，弹模态触发 `/api/backup/import`，迁移后原 key 改名为 `*_migrated_<ts>`
-- **路由**：Hash 路由（`#list / #add / #edit / #detail / #review / #settings / #offers / #archived / #calendar / #stats`）
+- **路由**：Hash 路由（`#list / #add / #edit / #detail / #settings / #offers / #archived / #calendar / #stats`）
 - **求职偏好注入**：`buildPreferencesContext()` 把 `settings.jobPreferences` 渲染成 prompt 末尾段落，注入 5 个 AI 功能（interview_analysis / company_research / greeting_message / cover_letter / match_score）。JD 格式化与参考答案故意不注入
 - **Webhook draft 模式**：URL 后端脱敏返回，前端用 `notifyDraft.webhookUrl` 单独管理；空串=保留旧值，`__CLEAR__` 哨兵值=清除
 - **统计图表**：Chart.js 4.4.1 CDN，进 `#stats` 路由时 fetch + 2 次 requestAnimationFrame 等 DOM 渲染再 render，destroy 旧 chart 避免 canvas 复用问题

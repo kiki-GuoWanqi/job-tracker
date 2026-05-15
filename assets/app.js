@@ -101,7 +101,7 @@ createApp({
     function parseRoute() {
       const hash = window.location.hash.replace(/^#\/?/, '') || 'list';
       const [p, id = ''] = hash.split('/');
-      const valid = ['list', 'add', 'edit', 'detail', 'review', 'settings', 'offers', 'archived', 'calendar', 'stats'];
+      const valid = ['list', 'add', 'edit', 'detail', 'settings', 'offers', 'archived', 'calendar', 'stats'];
       page.value = valid.includes(p) ? p : 'notfound';
       routeId.value = id;
     }
@@ -540,11 +540,21 @@ createApp({
       { key: 'interview', title: '面试中',  statuses: ['面试中'],                  dot: 'bg-amber-500'  },
     ];
 
+    // displayOrder DESC（越大越靠上），缺失值兜底 applicationDate，再兜 updatedAt
+    function orderKey(a) {
+      if (typeof a.displayOrder === 'number') return a.displayOrder;
+      const t = Date.parse(a.applicationDate) || Date.parse(a.updatedAt) || 0;
+      return t;
+    }
+    function compareByOrderDesc(a, b) {
+      return orderKey(b) - orderKey(a);
+    }
+
     const kanbanColumns = computed(() => {
       return KANBAN_COLUMNS.map(col => {
         const items = searchedApplications.value
           .filter(a => col.statuses.includes(a.status))
-          .sort((a, b) => b.applicationDate.localeCompare(a.applicationDate));
+          .sort(compareByOrderDesc);
         return { ...col, items };
       });
     });
@@ -552,13 +562,13 @@ createApp({
     const offerApps = computed(() =>
       searchedApplications.value
         .filter(a => a.status === '已 Offer')
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .sort(compareByOrderDesc)
     );
 
     const archivedApps = computed(() =>
       searchedApplications.value
         .filter(a => a.status === '已挂')
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .sort(compareByOrderDesc)
     );
 
     const offerCount    = computed(() => applications.value.filter(a => a.status === '已 Offer').length);
@@ -667,10 +677,12 @@ createApp({
       if (customRoundInput.value.trim()) selectRound(appId, customRoundInput.value);
     }
 
-    // ── Kanban 拖拽 ──
+    // ── Kanban 拖拽（跨列改状态 + 同列改顺序）──
     const draggingId = ref(null);
     const draggingFromStatus = ref('');
     const dragOverColKey = ref('');
+    const dragOverCardId = ref('');           // 当前 hover 的目标卡 id
+    const dragOverInsertSide = ref('');       // 'before' | 'after'
 
     function handleDragStart(app, event) {
       draggingId.value = app.id;
@@ -694,6 +706,72 @@ createApp({
       draggingId.value = null;
       draggingFromStatus.value = '';
       dragOverColKey.value = '';
+      dragOverCardId.value = '';
+      dragOverInsertSide.value = '';
+    }
+
+    // 卡片上 hover：判断鼠标是在卡上半还是下半，决定插入「之前」还是「之后」
+    function handleCardDragOver(col, app, event) {
+      if (!draggingId.value || draggingId.value === app.id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragOverColKey.value = col.key;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const isUpper = (event.clientY - rect.top) < rect.height / 2;
+      dragOverCardId.value = app.id;
+      dragOverInsertSide.value = isUpper ? 'before' : 'after';
+    }
+
+    function handleCardDragLeave(event) {
+      // 离开卡片本身（不是去其子节点）才清掉
+      if (event.currentTarget.contains(event.relatedTarget)) return;
+      // 不清 dragOverCardId，留给下一张卡覆盖；只有 drop 或 dragend 才彻底清
+    }
+
+    // 计算把 dragged 插到 col 的目标位置（targetApp + side）时，应得的 displayOrder
+    function computeOrderForInsert(col, draggedId, targetApp, side) {
+      // 拖入 col 的「最终视觉序列」= 原 col.items 去掉 dragged（若本来就在同列）
+      const items = col.items.filter(a => a.id !== draggedId);
+      const tIdx = targetApp ? items.findIndex(a => a.id === targetApp.id) : -1;
+      let insertIdx;
+      if (tIdx < 0) {
+        // 没指定 target：拖到列空白处 → 放最末尾
+        insertIdx = items.length;
+      } else {
+        insertIdx = side === 'before' ? tIdx : tIdx + 1;
+      }
+      // DESC 排序：插入位置之上的 prev 应当有更大的 displayOrder
+      const prev = items[insertIdx - 1];   // 视觉上方（更大）
+      const next = items[insertIdx];       // 视觉下方（更小）
+      const STEP = 1000;
+      if (!prev && !next) return Date.now();
+      if (!prev) return orderKey(next) + STEP;       // 顶部
+      if (!next) return orderKey(prev) - STEP;       // 底部
+      return (orderKey(prev) + orderKey(next)) / 2;  // 中间
+    }
+
+    async function handleCardDrop(col, targetApp, event) {
+      event.preventDefault();
+      event.stopPropagation();
+      const draggedId = event.dataTransfer.getData('text/plain') || draggingId.value;
+      const side = dragOverInsertSide.value || 'after';
+      handleDragEnd();
+      const app = applications.value.find(a => a.id === draggedId);
+      if (!app || app.id === targetApp.id) return;
+
+      const newOrder = computeOrderForInsert(col, draggedId, targetApp, side);
+      const sameCol = col.statuses.includes(app.status);
+      if (sameCol) {
+        // 同列：只改顺序
+        app.displayOrder = newOrder;
+        app.updatedAt = new Date().toISOString();
+      } else {
+        // 跨列：同时改 status + 改顺序。先本地置好 displayOrder，再发 status 端点
+        app.displayOrder = newOrder;
+        const target = col.statuses[0];
+        const round = target === '面试中' ? (app.interviewRound || '一面') : '';
+        await changeStatus(draggedId, target, round);
+      }
     }
 
     function handleDrop(col, event) {
@@ -702,7 +780,11 @@ createApp({
       handleDragEnd();
       const app = applications.value.find(a => a.id === appId);
       if (!app) return;
-      if (col.statuses.includes(app.status)) return;
+      const sameCol = col.statuses.includes(app.status);
+      if (sameCol) return;  // 同列空白处 drop：无操作（位置由 card drop 决定）
+      // 跨列：放到列末尾
+      const newOrder = computeOrderForInsert(col, appId, null, 'after');
+      app.displayOrder = newOrder;
       const target = col.statuses[0];
       const round = target === '面试中' ? (app.interviewRound || '一面') : '';
       changeStatus(appId, target, round);
@@ -1287,20 +1369,8 @@ createApp({
       expandedCards.value[id] = !expandedCards.value[id];
     }
 
-    const selfTestMode = ref(false);
-    const revealedAnswers = ref({});
-
-    function toggleSelfTest() {
-      selfTestMode.value = !selfTestMode.value;
-      revealedAnswers.value = {};
-    }
-
-    function revealAnswer(qId) {
-      revealedAnswers.value[qId] = true;
-    }
-
     const currentApp = computed(() =>
-      ['detail', 'review'].includes(page.value)
+      page.value === 'detail'
         ? (applications.value.find(a => a.id === routeId.value) || null)
         : null
     );
@@ -1891,13 +1961,108 @@ ${resume}${buildPreferencesContext()}
       scrapeUrl.value = '';
       scrapeError.value = '';
       scrapeNote.value = '';
+      scrapePlatform.value = '';
+      extractText.value = '';
+      extractError.value = '';
+      extractNote.value = '';
+      extractOpen.value = false;
     }
 
-    // ── 半自动 JD 抓取（Boss MVP + 通用 fallback）──
+    // ── 从粘贴文本 AI 提取（绕过 Boss 反爬的主路径）──
+    const JD_EXTRACT_SYSTEM = '你是一个简历/招聘信息解析助手。用户会粘贴整段网页文字（可能含导航、广告、推荐岗位等噪音），从中提取出他们正在查看的「目标岗位」信息。严格输出 JSON，不要 markdown 代码块标记，不要任何说明文字。';
+    const JD_EXTRACT_USER = (text) =>
+`下方是用户在招聘网站详情页 Ctrl+A 复制的整页文本，请从中提取「他们正在投递的那个岗位」的关键信息。
+
+输出 JSON 结构（仅 JSON 本身，不加任何前后缀）：
+{
+  "companyName": "...",
+  "position": "...",
+  "salary": "...",
+  "location": "...",
+  "jdRaw": "..."
+}
+
+约定：
+- companyName：招聘公司名（不是网站名/平台名，如 BOSS 直聘、智联 都不是）
+- position：岗位名称
+- salary：薪资范围原文（如「25-40K · 14薪」）；没找到留空字符串
+- location：工作城市/区域；没找到留空字符串
+- jdRaw：岗位职责 + 任职要求 + 加分项的纯文本拼接，保留换行；不要带「岗位详情 / 公司介绍」等无关段；遇到推荐岗位/相似岗位列表必须忽略
+- 任何无法确定的字段一律给空字符串，不要编造
+
+粘贴文本（前 8000 字）：
+\`\`\`
+${String(text || '').slice(0, 8000)}
+\`\`\``;
+
+    function parseExtractedJD(raw) {
+      let t = String(raw || '').trim();
+      if (t.startsWith('```')) {
+        t = t.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '').trim();
+      }
+      const first = t.indexOf('{');
+      const last  = t.lastIndexOf('}');
+      if (first >= 0 && last > first) t = t.slice(first, last + 1);
+      const d = JSON.parse(t);
+      return {
+        companyName: String(d.companyName || '').trim(),
+        position:    String(d.position    || '').trim(),
+        salary:      String(d.salary      || '').trim(),
+        location:    String(d.location    || '').trim(),
+        jdRaw:       String(d.jdRaw       || '').trim()
+      };
+    }
+
+    const extractText    = ref('');
+    const extractLoading = ref(false);
+    const extractError   = ref('');
+    const extractNote    = ref('');
+    const extractOpen    = ref(false);
+
+    async function extractFromText() {
+      const text = extractText.value.trim();
+      if (text.length < 30) {
+        extractError.value = '粘贴的文本太短，请到岗位详情页 Ctrl+A → Ctrl+C 后再粘贴';
+        return;
+      }
+      if (!hasAnyKey()) {
+        extractError.value = '后端未配置 AI Key，请到设置 → 模型配置';
+        return;
+      }
+      extractLoading.value = true;
+      extractError.value = '';
+      extractNote.value = '';
+      try {
+        const raw = await callTextAI(JD_EXTRACT_SYSTEM, JD_EXTRACT_USER(text), 'jd_extract');
+        const data = parseExtractedJD(raw);
+        // 只覆盖空字段
+        let filledCount = 0;
+        if (!form.companyName && data.companyName) { form.companyName = data.companyName; filledCount++; }
+        if (!form.position    && data.position)    { form.position    = data.position;    filledCount++; }
+        if (!form.workCity    && data.location)    { form.workCity    = data.location;    filledCount++; }
+        if (!form.offerSalary && data.salary)      { form.offerSalary = data.salary;      filledCount++; }
+        if (!form.jdRaw       && data.jdRaw)       { form.jdRaw       = data.jdRaw;       filledCount++; }
+        if (filledCount === 0) {
+          extractNote.value = 'AI 没识别出新字段（可能字段都已填）。请检查粘贴的文本是否包含岗位信息。';
+        } else {
+          extractNote.value = `已预填 ${filledCount} 个字段，请核对后保存。可继续点「AI 格式化 JD」整理 JD 段落。`;
+          extractText.value = '';   // 成功后清空 textarea
+          extractOpen.value = false;
+        }
+      } catch (e) {
+        extractError.value = (e.message || 'AI 提取失败') + '（解析格式异常请重试，或检查 AI Key）';
+      } finally {
+        extractLoading.value = false;
+      }
+    }
+
+    // ── 半自动 URL 抓取（多平台 adapter，反爬时大概率失败）──
+    const SCRAPE_PLATFORMS = ['Boss 直聘', '拉勾网', '猎聘', '智联招聘', '前程无忧', 'LinkedIn', '其他网页'];
     const scrapeUrl     = ref('');
     const scrapeLoading = ref(false);
     const scrapeError   = ref('');
     const scrapeNote    = ref('');
+    const scrapePlatform = ref('');   // 成功时由后端返回的平台标签
 
     async function scrapeFromUrl() {
       const url = scrapeUrl.value.trim();
@@ -1916,11 +2081,12 @@ ${resume}${buildPreferencesContext()}
         if (!form.workCity    && data.location)    form.workCity    = data.location;
         if (!form.offerSalary && data.salary)      form.offerSalary = data.salary;
         if (!form.jdRaw       && data.jdRaw)       form.jdRaw       = data.jdRaw;
-        scrapeNote.value = data.note || '已预填，请核对后保存';
+        scrapePlatform.value = data.platform || '';
+        scrapeNote.value = data.note || `已识别平台：${data.platform}。请核对后保存。`;
       } catch (e) {
         scrapeError.value = e.message || '抓取失败';
         if (e.detail?.blocked || /反爬|访问异常|HTTP 4|HTTP 5/.test(e.message || '')) {
-          scrapeNote.value = '建议改用「JD 截图导入」：在下方 JD 区粘贴截图或上传图片。';
+          scrapeNote.value = '建议改用上方「从粘贴文本提取」方案，更稳定。';
         }
       } finally {
         scrapeLoading.value = false;
@@ -1971,12 +2137,18 @@ ${resume}${buildPreferencesContext()}
         updatedAt:         now,
       };
       if (page.value === 'add') {
+        // 新投递默认排到最顶：用比现有最大 displayOrder 再大 1 的值
+        const maxOrder = applications.value.reduce((m, a) => {
+          const v = typeof a.displayOrder === 'number' ? a.displayOrder : 0;
+          return v > m ? v : m;
+        }, Date.now());
         const newApp = {
           id: crypto.randomUUID(),
           ...data,
           aiAnalysis: '',
           interviews: [],
           tasks: [],
+          displayOrder: maxOrder + 1,
           createdAt: now,
           statusHistory: [{
             status: data.status,
@@ -2308,9 +2480,6 @@ ${resume}${buildPreferencesContext()}
       } else if (newPage === 'detail') {
         detailTab.value = 'info';
         cancelInterview();
-      } else if (newPage === 'review') {
-        selfTestMode.value = false;
-        revealedAnswers.value = {};
       } else if (newPage === 'stats') {
         loadStats();
       }
@@ -2354,8 +2523,9 @@ ${resume}${buildPreferencesContext()}
       activeBadgePicker, pickerStatus, customRoundInput, popoverStyle, roundPickerOptions: ROUND_PICKER_OPTIONS,
       openBadgePicker, closeBadgePicker, selectStatus, selectRound, submitCustomRound,
       pickerOfferSalary, selectOfferSalary, submitOfferSalary,
-      draggingId, draggingFromStatus, dragOverColKey,
+      draggingId, draggingFromStatus, dragOverColKey, dragOverCardId, dragOverInsertSide,
       handleDragStart, handleDragOver, handleDragLeave, handleDragEnd, handleDrop,
+      handleCardDragOver, handleCardDragLeave, handleCardDrop,
       // 详情
       currentApp, detailTab, jdHtml,
       jdFormatLoading, jdFormatError, formatJDForm, formatJD, formJdHtml,
@@ -2369,7 +2539,6 @@ ${resume}${buildPreferencesContext()}
       calEventTypes, calTypeOn, toggleCalType, calTypeCounts,
       calMonthEventCount, calendarEventStats, calUpcoming,
       // 面经
-      selfTestMode, revealedAnswers, toggleSelfTest, revealAnswer,
       jdImageLoading, jdImageError, jdImageInputRef, handleJDImage,
       sortedInterviews, interviewFormOpen, editingInterviewId, iForm,
       openAddInterview, openEditInterview, cancelInterview, saveInterview, deleteInterview,
@@ -2413,8 +2582,10 @@ ${resume}${buildPreferencesContext()}
       SETTINGS_TABS, settingsTab, settingsTabMeta,
       // 数据统计
       statsData, statsLoading, statsError, loadStats,
-      // JD 抓取
-      scrapeUrl, scrapeLoading, scrapeError, scrapeNote, scrapeFromUrl,
+      // JD 抓取（URL，多平台）
+      scrapeUrl, scrapeLoading, scrapeError, scrapeNote, scrapePlatform, SCRAPE_PLATFORMS, scrapeFromUrl,
+      // JD 提取（粘贴文本 + AI）
+      extractText, extractLoading, extractError, extractNote, extractOpen, extractFromText,
       // AI 测试
       aiTestLoading, aiTestResult, testAIConnection,
       // AI 模型配置

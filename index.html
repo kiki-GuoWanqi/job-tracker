@@ -609,6 +609,12 @@
       transform: scale(0.98);
       cursor: grabbing !important;
     }
+    .kanban-card-insert-before {
+      box-shadow: 0 -3px 0 0 #6366f1, 0 0 0 1px rgba(99, 102, 241, 0.4);
+    }
+    .kanban-card-insert-after {
+      box-shadow: 0 3px 0 0 #6366f1, 0 0 0 1px rgba(99, 102, 241, 0.4);
+    }
     [draggable="true"] { cursor: grab; }
     [draggable="true"]:active { cursor: grabbing; }
 
@@ -683,7 +689,7 @@
         <span class="hidden sm:inline-block text-[11px] font-medium text-slate-400 tabular ml-1">{{ applications.length }}</span>
       </a>
       <div class="flex items-center gap-1">
-        <a href="#list" :class="navClass(['list', 'add', 'edit', 'detail', 'review'])">投递</a>
+        <a href="#list" :class="navClass(['list', 'add', 'edit', 'detail'])">投递</a>
         <a href="#calendar" :class="navClass(['calendar'])">
           日历
           <span v-if="calendarTodayCount" class="ml-1 text-[10px] tabular bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">{{ calendarTodayCount }}</span>
@@ -832,10 +838,17 @@
                @drop="handleDrop(col, $event)">
             <div v-for="(app, idx) in col.items" :key="app.id"
                  class="card card-hover p-3.5 stagger-item cursor-pointer group"
-                 :class="{ 'kanban-card-dragging': draggingId === app.id }"
+                 :class="{
+                   'kanban-card-dragging': draggingId === app.id,
+                   'kanban-card-insert-before': dragOverCardId === app.id && dragOverInsertSide === 'before' && draggingId !== app.id,
+                   'kanban-card-insert-after':  dragOverCardId === app.id && dragOverInsertSide === 'after'  && draggingId !== app.id
+                 }"
                  draggable="true"
                  @dragstart="handleDragStart(app, $event)"
                  @dragend="handleDragEnd"
+                 @dragover="handleCardDragOver(col, app, $event)"
+                 @dragleave="handleCardDragLeave($event)"
+                 @drop="handleCardDrop(col, app, $event)"
                  @click="goDetail(app.id)"
                  :style="{ animationDelay: Math.min(idx, 5) * 30 + 'ms' }">
 
@@ -1375,24 +1388,59 @@
       </div>
 
       <div class="space-y-4">
-        <!-- 半自动 JD 抓取（仅添加时显示） -->
+        <!-- 从粘贴文本 AI 提取（推荐 · 绕过 Boss 反爬） -->
+        <section v-if="page === 'add'" class="card p-5 border border-dashed border-emerald-200/80 bg-gradient-to-br from-emerald-50/40 to-transparent">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <span class="icon-chip text-white" style="background: linear-gradient(135deg, #10b981 0%, #6366f1 100%);">📋</span>
+              <div>
+                <h2 class="text-[14px] font-semibold text-zinc-900">从粘贴文本提取（推荐）</h2>
+                <p class="text-[11.5px] text-zinc-500 mt-0.5">在岗位详情页 <kbd class="px-1 py-0.5 text-[10.5px] bg-zinc-100 rounded">Ctrl+A</kbd> <kbd class="px-1 py-0.5 text-[10.5px] bg-zinc-100 rounded">Ctrl+C</kbd> 复制全部，粘贴到下方点「AI 提取」。绕过反爬，效果最稳。</p>
+              </div>
+            </div>
+            <button v-if="!extractOpen" @click="extractOpen = true" class="btn btn-sm btn-primary shrink-0">展开</button>
+            <button v-else @click="extractOpen = false" class="btn btn-sm btn-secondary shrink-0">收起</button>
+          </div>
+          <div v-if="extractOpen" class="space-y-2">
+            <textarea v-model="extractText" rows="6"
+                      placeholder="粘贴 Boss / 拉勾 / 猎聘 / 任意招聘页的整页文字..."
+                      class="field font-mono text-[12px] leading-relaxed"></textarea>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] text-zinc-400 tabular">{{ extractText.length }} 字 · 取前 8000 字喂 AI</span>
+              <button @click="extractFromText" :disabled="extractLoading" class="btn btn-sm btn-primary">
+                <span v-if="extractLoading" class="spinner"></span>
+                <span v-else>✨</span>
+                {{ extractLoading ? 'AI 提取中…' : 'AI 提取' }}
+              </button>
+            </div>
+          </div>
+          <p v-if="extractError" class="text-xs text-rose-500 mt-2">{{ extractError }}</p>
+          <p v-if="extractNote" class="text-xs text-emerald-700 mt-2">{{ extractNote }}</p>
+        </section>
+
+        <!-- 半自动 URL 抓取（多平台 · 反爬时建议改用上方粘贴文本方案） -->
         <section v-if="page === 'add'" class="card p-5 border border-dashed border-cyan-200/80 bg-gradient-to-br from-cyan-50/40 to-transparent">
-          <div class="flex items-center gap-2 mb-3">
+          <div class="flex items-center gap-2 mb-2">
             <span class="icon-chip text-white" style="background: linear-gradient(135deg, #06b6d4 0%, #6366f1 100%);">🔗</span>
             <div>
-              <h2 class="text-[14px] font-semibold text-zinc-900">从 URL 抓取（Beta · Boss 直聘）</h2>
-              <p class="text-[11.5px] text-zinc-500 mt-0.5">粘贴岗位详情页链接，自动预填公司/岗位/薪资/JD 摘要。抓不全的字段用截图导入兜底。</p>
+              <h2 class="text-[14px] font-semibold text-zinc-900">从 URL 抓取（多平台 · 备用）</h2>
+              <p class="text-[11.5px] text-zinc-500 mt-0.5">粘贴岗位详情页 URL，按平台分发解析。反爬严重时建议改用上方「粘贴文本」方案。</p>
             </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mb-3">
+            <span v-for="p in SCRAPE_PLATFORMS" :key="p"
+                  class="text-[10.5px] px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">{{ p }}</span>
           </div>
           <div class="flex items-center gap-2">
             <input v-model="scrapeUrl" type="url"
-                   placeholder="https://www.zhipin.com/job_detail/..."
+                   placeholder="支持 zhipin.com / lagou.com / liepin.com / zhaopin.com / 51job.com / linkedin.com / 其他网页"
                    class="field flex-1" />
             <button @click="scrapeFromUrl" :disabled="scrapeLoading" class="btn btn-sm btn-primary">
               <span v-if="scrapeLoading" class="spinner"></span>
               {{ scrapeLoading ? '抓取中' : '抓取' }}
             </button>
           </div>
+          <p v-if="scrapePlatform && !scrapeError" class="text-[11px] text-emerald-700 mt-2">已识别：{{ scrapePlatform }}</p>
           <p v-if="scrapeError" class="text-xs text-rose-500 mt-2">{{ scrapeError }}</p>
           <p v-if="scrapeNote" class="text-xs text-zinc-500 mt-2">{{ scrapeNote }}</p>
         </section>
@@ -1732,14 +1780,14 @@
           </div>
 
           <div class="flex items-center gap-2 shrink-0">
-            <a :href="'#review/' + routeId" class="btn btn-secondary btn-sm lift">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-              面试浏览
-            </a>
             <a :href="'#edit/' + routeId" class="btn btn-primary btn-sm lift">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               编辑
             </a>
+            <button @click="deleteApp" class="btn btn-danger btn-sm lift">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+              删除
+            </button>
           </div>
         </div>
 
@@ -1747,6 +1795,9 @@
         <div class="border-b border-zinc-200 mb-6 flex gap-6">
           <button @click="detailTab = 'info'" :class="['tab-trigger', detailTab === 'info' && 'active']">
             基本信息
+          </button>
+          <button @click="detailTab = 'ai'" :class="['tab-trigger', detailTab === 'ai' && 'active']">
+            AI 辅助
           </button>
           <button @click="detailTab = 'interviews'" :class="['tab-trigger', detailTab === 'interviews' && 'active']">
             面经
@@ -1958,6 +2009,49 @@
             <p v-if="matchScoreError[currentApp.id]" class="text-xs text-rose-500 mt-2">{{ matchScoreError[currentApp.id] }}</p>
           </div>
 
+          <!-- 公司简介 + 备注 双栏 -->
+          <div v-if="currentApp.companyBrief || currentApp.notes" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div v-if="currentApp.companyBrief" class="card p-5">
+              <h3 class="section-label mb-3">公司简介（我的笔记）</h3>
+              <p class="text-[13.5px] text-zinc-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.companyBrief }}</p>
+            </div>
+            <div v-if="currentApp.notes" class="card p-5">
+              <h3 class="section-label mb-3">备注</h3>
+              <p class="text-[13.5px] text-zinc-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.notes }}</p>
+            </div>
+          </div>
+
+          <!-- JD -->
+          <div class="card p-6">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-[15px] font-semibold text-zinc-900">职位描述</h3>
+                <p class="text-[11px] text-zinc-400 mt-0.5">原始 JD 与 AI 结构化结果</p>
+              </div>
+              <button v-if="currentApp.jdRaw" @click="formatJD(currentApp.id)"
+                      :disabled="jdFormatLoading"
+                      class="btn btn-sm" :class="jdFormatLoading ? 'btn-secondary' : 'btn-primary'">
+                <span v-if="jdFormatLoading" class="spinner"></span>
+                <span v-else>✨</span>
+                {{ jdFormatLoading ? '格式化中' : (currentApp.jdFormatted ? '重新格式化' : 'AI 格式化') }}
+              </button>
+            </div>
+            <div v-if="currentApp.jdFormatted" class="prose" v-html="jdHtml"></div>
+            <div v-else-if="currentApp.jdRaw">
+              <pre class="text-[13px] text-zinc-700 whitespace-pre-wrap font-sans leading-relaxed">{{ currentApp.jdRaw }}</pre>
+            </div>
+            <div v-else class="py-8 text-center">
+              <div class="text-3xl mb-2 opacity-50">📋</div>
+              <p class="text-sm text-zinc-500">暂无 JD</p>
+              <a :href="'#edit/' + routeId" class="btn btn-secondary btn-xs mt-3">前往编辑</a>
+            </div>
+            <p v-if="jdFormatError" class="text-xs text-rose-500 mt-2">{{ jdFormatError }}</p>
+          </div>
+
+        </div>
+
+        <!-- AI 辅助 Tab -->
+        <div v-else-if="detailTab === 'ai'" class="space-y-4 fade-in">
           <!-- AI 公司研究 -->
           <div class="card p-6 relative overflow-hidden">
             <div class="absolute -top-12 -right-12 w-44 h-44 rounded-full pointer-events-none"
@@ -2064,45 +2158,6 @@
             <p v-if="coverLetterError[currentApp.id]" class="text-xs text-rose-500 mt-2">{{ coverLetterError[currentApp.id] }}</p>
           </div>
 
-          <!-- 公司简介 + 备注 双栏 -->
-          <div v-if="currentApp.companyBrief || currentApp.notes" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div v-if="currentApp.companyBrief" class="card p-5">
-              <h3 class="section-label mb-3">公司简介（我的笔记）</h3>
-              <p class="text-[13.5px] text-zinc-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.companyBrief }}</p>
-            </div>
-            <div v-if="currentApp.notes" class="card p-5">
-              <h3 class="section-label mb-3">备注</h3>
-              <p class="text-[13.5px] text-zinc-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.notes }}</p>
-            </div>
-          </div>
-
-          <!-- JD -->
-          <div class="card p-6">
-            <div class="flex items-center justify-between mb-4">
-              <div>
-                <h3 class="text-[15px] font-semibold text-zinc-900">职位描述</h3>
-                <p class="text-[11px] text-zinc-400 mt-0.5">原始 JD 与 AI 结构化结果</p>
-              </div>
-              <button v-if="currentApp.jdRaw" @click="formatJD(currentApp.id)"
-                      :disabled="jdFormatLoading"
-                      class="btn btn-sm" :class="jdFormatLoading ? 'btn-secondary' : 'btn-primary'">
-                <span v-if="jdFormatLoading" class="spinner"></span>
-                <span v-else>✨</span>
-                {{ jdFormatLoading ? '格式化中' : (currentApp.jdFormatted ? '重新格式化' : 'AI 格式化') }}
-              </button>
-            </div>
-            <div v-if="currentApp.jdFormatted" class="prose" v-html="jdHtml"></div>
-            <div v-else-if="currentApp.jdRaw">
-              <pre class="text-[13px] text-zinc-700 whitespace-pre-wrap font-sans leading-relaxed">{{ currentApp.jdRaw }}</pre>
-            </div>
-            <div v-else class="py-8 text-center">
-              <div class="text-3xl mb-2 opacity-50">📋</div>
-              <p class="text-sm text-zinc-500">暂无 JD</p>
-              <a :href="'#edit/' + routeId" class="btn btn-secondary btn-xs mt-3">前往编辑</a>
-            </div>
-            <p v-if="jdFormatError" class="text-xs text-rose-500 mt-2">{{ jdFormatError }}</p>
-          </div>
-
           <!-- AI 面试建议 -->
           <div class="card p-6 relative overflow-hidden">
             <!-- 装饰光晕 -->
@@ -2144,7 +2199,7 @@
         </div>
 
         <!-- 面经 Tab -->
-        <div v-else class="fade-in">
+        <div v-else-if="detailTab === 'interviews'" class="fade-in">
 
           <!-- 顶部操作栏 -->
           <div class="flex items-center justify-between mb-5">
@@ -2305,132 +2360,6 @@
         </div>
 
       </template>
-    </div>
-
-    <!-- 面试前浏览 -->
-    <div v-else-if="page === 'review'" class="fade-in">
-      <template v-if="currentApp">
-        <!-- 顶部导航 -->
-        <div class="flex items-center justify-between mb-5">
-          <a :href="'#detail/' + routeId" class="btn btn-ghost btn-sm -ml-3">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
-            返回详情
-          </a>
-          <button @click="toggleSelfTest"
-                  :class="selfTestMode
-                    ? 'bg-amber-500 text-white border-amber-500 hover:bg-amber-600'
-                    : 'btn-secondary'"
-                  class="btn btn-sm">
-            <svg v-if="!selfTestMode" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
-            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m5 12 5 5L20 7"/></svg>
-            {{ selfTestMode ? '自测中 · 点击退出' : '自测模式' }}
-          </button>
-        </div>
-
-        <!-- 公司 & 岗位 hero -->
-        <div class="card p-7 mb-5 relative overflow-hidden">
-          <div class="absolute -top-16 -right-16 w-64 h-64 rounded-full pointer-events-none"
-               style="background: radial-gradient(circle, rgba(99, 102, 241, 0.18) 0%, transparent 70%);"></div>
-          <div class="absolute -bottom-12 -left-12 w-48 h-48 rounded-full pointer-events-none"
-               style="background: radial-gradient(circle, rgba(6, 182, 212, 0.12) 0%, transparent 70%);"></div>
-          <div class="relative flex items-start justify-between gap-4 flex-wrap">
-            <div class="min-w-0 flex-1">
-              <h1 class="text-[26px] font-semibold text-zinc-900 tracking-tight">{{ currentApp.companyName }}</h1>
-              <p class="text-[15px] text-zinc-600 mt-1.5">
-                {{ currentApp.position }}<span v-if="currentApp.workCity" class="text-zinc-400"> · {{ currentApp.workCity }}</span>
-              </p>
-              <p class="text-xs text-zinc-400 mt-1 tabular">投递于 {{ currentApp.applicationDate }}</p>
-            </div>
-            <span :class="statusBadgeClass(currentApp.status)"
-                  class="shrink-0 text-sm font-medium px-3 py-1 rounded-full inline-flex items-center">
-              <span :class="statusDotClass(currentApp.status)" class="status-dot"></span>
-              {{ currentApp.status }}{{ currentApp.interviewRound ? ' · ' + currentApp.interviewRound : '' }}
-            </span>
-          </div>
-        </div>
-
-        <div class="space-y-4">
-          <!-- AI 公司研究 -->
-          <div v-if="currentApp.companyResearch" class="card p-6 relative overflow-hidden">
-            <div class="absolute -top-12 -right-12 w-44 h-44 rounded-full pointer-events-none"
-                 style="background: radial-gradient(circle, rgba(6,182,212,0.10) 0%, transparent 70%);"></div>
-            <div class="flex items-center gap-2.5 mb-3 relative">
-              <span class="icon-chip cyan">🔍</span>
-              <h2 class="text-[15px] font-semibold text-zinc-900">AI 公司研究</h2>
-            </div>
-            <div class="prose" v-html="companyResearchHtml"></div>
-          </div>
-
-          <!-- 公司简介（手写笔记） -->
-          <div v-if="currentApp.companyBrief" class="card p-6">
-            <h2 class="section-label mb-3">公司简介</h2>
-            <p class="text-[14px] text-zinc-700 leading-relaxed whitespace-pre-wrap">{{ currentApp.companyBrief }}</p>
-          </div>
-
-          <!-- JD -->
-          <div class="card p-6">
-            <h2 class="section-label mb-3">职位描述（JD）</h2>
-            <div v-if="currentApp.jdFormatted" class="prose" v-html="jdHtml"></div>
-            <pre v-else-if="currentApp.jdRaw" class="text-[13.5px] text-zinc-700 whitespace-pre-wrap font-sans leading-relaxed">{{ currentApp.jdRaw }}</pre>
-            <p v-else class="text-sm text-zinc-400">暂无 JD 内容</p>
-          </div>
-
-          <!-- AI 面试建议 -->
-          <div class="card p-6">
-            <h2 class="section-label mb-3 flex items-center gap-1.5">✨ AI 面试建议</h2>
-            <div v-if="currentApp.aiAnalysis" class="prose" v-html="aiAnalysisHtml"></div>
-            <p v-else class="text-sm text-zinc-400">
-              尚未生成，前往 <a :href="'#detail/' + routeId" class="text-indigo-600 hover:underline font-medium">详情页</a> 点击「生成建议」
-            </p>
-          </div>
-
-          <!-- 面经记录 -->
-          <div class="card p-6">
-            <h2 class="section-label mb-4">面经记录</h2>
-            <div v-if="sortedInterviews.length === 0" class="text-sm text-zinc-400 text-center py-6">暂无面经记录</div>
-            <div v-for="(interview, iIdx) in sortedInterviews" :key="interview.id"
-                 :class="iIdx > 0 ? 'mt-8 pt-8 border-t border-zinc-100' : ''">
-              <div class="flex items-center gap-3 mb-3 flex-wrap">
-                <span class="text-sm font-semibold text-zinc-900 tabular">{{ interview.date }}</span>
-                <span v-if="interview.round"
-                      class="text-xs font-medium bg-zinc-900 text-white px-2 py-0.5 rounded-full">
-                  {{ interview.round }}
-                </span>
-                <span class="text-xs text-zinc-400 tabular">{{ interview.questions.length }} 道题</span>
-              </div>
-              <p v-if="interview.notes" class="text-xs text-zinc-500 italic mb-4 leading-relaxed">{{ interview.notes }}</p>
-              <div class="space-y-5">
-                <div v-if="interview.questions.length === 0" class="text-xs text-zinc-400">本场暂无题目记录</div>
-                <div v-for="(q, qIdx) in interview.questions" :key="q.id">
-                  <p class="text-[14px] font-medium text-zinc-900 mb-2">
-                    <span class="text-zinc-400 mr-1.5 tabular">Q{{ qIdx + 1 }}.</span>
-                    {{ q.question || '（未填写题目）' }}
-                  </p>
-                  <div v-if="q.answer" class="pl-4 border-l-2 border-indigo-200 mb-3">
-                    <p class="text-[10.5px] text-indigo-500 font-semibold uppercase tracking-wider mb-1">我的回答</p>
-                    <p class="text-[13px] text-zinc-700 leading-relaxed whitespace-pre-wrap">{{ q.answer }}</p>
-                  </div>
-                  <div v-if="q.refAnswer" class="pl-4 border-l-2 border-emerald-200">
-                    <template v-if="!selfTestMode || revealedAnswers[q.id]">
-                      <p class="text-[10.5px] text-emerald-600 font-semibold uppercase tracking-wider mb-1">参考答案</p>
-                      <div class="prose prose-sm" v-html="renderMd(q.refAnswer)"></div>
-                    </template>
-                    <button v-else @click="revealAnswer(q.id)" class="btn btn-secondary btn-xs">
-                      👁 显示参考答案
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
-      <!-- 找不到记录 -->
-      <div v-else class="card p-16 text-center">
-        <div class="w-14 h-14 rounded-2xl bg-zinc-100 mx-auto mb-4 flex items-center justify-center text-2xl">🔍</div>
-        <p class="text-zinc-900 font-medium mb-1">找不到该投递记录</p>
-        <a href="#list" class="btn btn-secondary btn-sm mt-3">返回列表</a>
-      </div>
     </div>
 
     <!-- 设置页 -->

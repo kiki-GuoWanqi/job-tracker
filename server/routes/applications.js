@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
 import { APP_DB_COLUMNS, rowToApplication, applicationToRow } from '../mappers.js';
 import { notify } from '../services/notifier.js';
+import { dedupHistory, historyEquals } from '../utils/status-history.js';
 
 const router = Router();
 
@@ -32,6 +33,18 @@ function insertStatusHistoryRows(db, appId, history) {
   for (const h of history) {
     stmt.run(appId, h.status || '', h.round || '', h.changedAt || h.changed_at || '');
   }
+}
+
+// 用 dedup 后的结果替换某 app 的整段 status_history。仅在内容真的变了时才写
+function replaceStatusHistoryDeduped(db, appId, candidate) {
+  const deduped = dedupHistory(candidate);
+  const current = db.prepare(
+    'SELECT status, round, changed_at FROM status_history WHERE application_id = ? ORDER BY id ASC'
+  ).all(appId);
+  if (historyEquals(current, deduped)) return deduped;
+  db.prepare('DELETE FROM status_history WHERE application_id = ?').run(appId);
+  insertStatusHistoryRows(db, appId, deduped);
+  return deduped;
 }
 
 function upsertApplication(db, app) {
@@ -75,7 +88,8 @@ router.post('/', (req, res) => {
   try {
     upsertApplication(db, app);
     if (Array.isArray(app.statusHistory) && app.statusHistory.length > 0) {
-      insertStatusHistoryRows(db, app.id, app.statusHistory);
+      const deduped = dedupHistory(app.statusHistory);
+      insertStatusHistoryRows(db, app.id, deduped);
     }
     db.prepare('COMMIT').run();
   } catch (e) {
@@ -103,8 +117,7 @@ router.put('/:id', (req, res) => {
   try {
     upsertApplication(db, app);
     if (Array.isArray(app.statusHistory)) {
-      db.prepare('DELETE FROM status_history WHERE application_id = ?').run(id);
-      insertStatusHistoryRows(db, id, app.statusHistory);
+      replaceStatusHistoryDeduped(db, id, app.statusHistory);
     }
     db.prepare('COMMIT').run();
   } catch (e) {
@@ -145,9 +158,11 @@ router.post('/:id/status', (req, res) => {
         'UPDATE applications SET status = ?, interview_round = ?, updated_at = ? WHERE id = ?'
       ).run(status, round, now, id);
     }
-    db.prepare(
-      'INSERT INTO status_history (application_id, status, round, changed_at) VALUES (?, ?, ?, ?)'
-    ).run(id, status, round, now);
+    // 状态时间轴：取现有 history + 候选新条目，过一遍 dedup（处理重复 / 倒退），再写回
+    const existing = db.prepare(
+      'SELECT status, round, changed_at FROM status_history WHERE application_id = ? ORDER BY id ASC'
+    ).all(id);
+    replaceStatusHistoryDeduped(db, id, [...existing, { status, round, changed_at: now }]);
     db.prepare('COMMIT').run();
   } catch (e) {
     db.prepare('ROLLBACK').run();
