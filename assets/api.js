@@ -48,10 +48,10 @@ window.JobTrackerAPI = {
   },
 
   ai: {
-    text: ({ system, user, purpose }) =>
-      request('POST', '/ai/text', { system, user, purpose }),
-    vision: ({ prompt, base64, mimeType, purpose }) =>
-      request('POST', '/ai/vision', { prompt, base64, mimeType, purpose })
+    text: ({ system, user, purpose, provider, noFallback }) =>
+      request('POST', '/ai/text', { system, user, purpose, provider, noFallback }),
+    vision: ({ prompt, base64, mimeType, purpose, provider, noFallback }) =>
+      request('POST', '/ai/vision', { prompt, base64, mimeType, purpose, provider, noFallback })
   },
 
   backup: {

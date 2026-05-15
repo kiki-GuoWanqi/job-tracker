@@ -9,7 +9,7 @@ export async function callText({ apiKey, baseUrl, model, system, user, signal })
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: model || 'gpt-4o-mini', messages, temperature: 0.3 }),
+    body: JSON.stringify({ model: model || 'gpt-4o-mini', messages }),
     signal
   });
   if (!resp.ok) {
@@ -35,7 +35,7 @@ export async function callVision({ apiKey, baseUrl, model, prompt, base64, mimeT
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: model || 'gpt-4o-mini', messages, temperature: 0.2 }),
+    body: JSON.stringify({ model: model || 'gpt-4o-mini', messages }),
     signal
   });
   if (!resp.ok) {

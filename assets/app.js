@@ -1775,32 +1775,18 @@ ${resume}
       aiTestLoading.value = { ...aiTestLoading.value, [key]: true };
       aiTestResult.value = { ...aiTestResult.value, [key]: '' };
       try {
-        // 临时改 routing：把 connection_test 指向被测 provider；测完不持久化
-        // 简化做法：直接通过传入 purpose='connection_test' 让后端走当前 routing；
-        // 想指定 provider 时改为在前端先把 routing 临时切换，但更稳妥是后端支持 override。
-        // 这里走最简单路径：保存当前 routing[connection_test] → 临时改 → 调 → 恢复
-        let restore = null;
-        if (providerKey) {
-          const current = settings.value.aiRouting?.connection_test || 'deepseek';
-          if (current !== providerKey) {
-            await JobTrackerAPI.settings.update({
-              aiRouting: { ...settings.value.aiRouting, connection_test: providerKey }
-            });
-            restore = current;
-          }
-        }
-        const data = await JobTrackerAPI.ai.text({
+        const payload = {
           system: '你是一个简洁的助手',
           user: '请回复"OK"',
           purpose: 'connection_test'
-        });
+        };
+        if (providerKey) {
+          payload.provider = providerKey;
+          payload.noFallback = true;
+        }
+        const data = await JobTrackerAPI.ai.text(payload);
         const msg = `✓ ${data.provider}${data.fallback ? ' (降级)' : ''}：${(data.content || '').slice(0, 30)}`;
         aiTestResult.value = { ...aiTestResult.value, [key]: msg };
-        if (restore !== null) {
-          await JobTrackerAPI.settings.update({
-            aiRouting: { ...settings.value.aiRouting, connection_test: restore }
-          });
-        }
       } catch (e) {
         aiTestResult.value = { ...aiTestResult.value, [key]: '✗ 失败：' + e.message };
       } finally {
