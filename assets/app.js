@@ -146,7 +146,8 @@ createApp({
       aiProviders: {},      // { deepseek: { hasKey, keyPreview, baseUrl, textModel, visionModel }, ... }
       aiRouting: {},        // { jd_format: 'deepseek', ... }
       aiProviderMeta: {},   // { deepseek: { key, label, defaultBaseUrl, ... }, ... }
-      aiPurposes: []        // [{ key, label, kind }, ...]
+      aiPurposes: [],       // [{ key, label, kind }, ...]
+      tavily: { hasKey: false, keyPreview: '' }   // Tavily 搜索 API Key 状态
     });
 
     // 求职偏好的预设选项
@@ -360,7 +361,8 @@ createApp({
           aiProviders: st.aiProviders || {},
           aiRouting: st.aiRouting || {},
           aiProviderMeta: st.aiProviderMeta || {},
-          aiPurposes: st.aiPurposes || []
+          aiPurposes: st.aiPurposes || [],
+          tavily: st.tavily || { hasKey: false, keyPreview: '' }
         };
         markAllClean();
         lastSentSettings = JSON.stringify({
@@ -1529,6 +1531,70 @@ ${jd ? `参考职位描述：\n${jd.slice(0, 600)}` : ''}${buildPreferencesConte
       }
     }
 
+    // ── 全网情报聚合（Tavily 搜索 + LLM 结构化）──
+    const intelLoading = ref(false);
+    const intelError = ref('');
+    const intelStats = ref(null);
+
+    async function runIntelSearch(app) {
+      if (!app || !app.id) return;
+      if (!settings.value?.tavily?.hasKey) {
+        intelError.value = '未配置 Tavily API Key，请先去设置页 → 模型配置 → 全网情报搜索 配置';
+        return;
+      }
+      if (app.intel && !confirm('将覆盖已有的全网情报，确认重新搜索？')) return;
+      intelLoading.value = true;
+      intelError.value = '';
+      intelStats.value = null;
+      try {
+        const resp = await JobTrackerAPI.intel.search(app.id);
+        // 后端已写入 DB；本地同步反应到 UI，避免 watch 又把 intel 字段 PUT 回后端
+        suppressWatch = true;
+        app.intel = resp.intel;
+        app.intelAt = resp.intel?.fetchedAt || new Date().toISOString();
+        lastSentByAppId.set(app.id, serializeApp(app));
+        queueMicrotask(() => { suppressWatch = false; });
+        intelStats.value = resp.queryStats || null;
+      } catch (e) {
+        intelError.value = e.message || '搜索失败，请稍后再试';
+      } finally {
+        intelLoading.value = false;
+      }
+    }
+
+    function formatIntelTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      const diffMs = Date.now() - d.getTime();
+      const mins = Math.round(diffMs / 60000);
+      if (mins < 1) return '刚刚';
+      if (mins < 60) return `${mins} 分钟前`;
+      const hours = Math.round(mins / 60);
+      if (hours < 24) return `${hours} 小时前`;
+      return d.toLocaleString('zh-CN');
+    }
+
+    function intelRoundLabel(key) {
+      return { round1: '一面', round2: '二面', round3: '三面', hr: 'HR 面', other: '其他' }[key] || key;
+    }
+
+    function hasIntelInterviews(intel) {
+      if (!intel?.interviews) return false;
+      return ['round1','round2','round3','hr','other'].some(k => (intel.interviews[k] || []).length > 0);
+    }
+
+    function intelSourceUrl(intel, idx) {
+      const s = (intel?.sources || []).find(x => x.idx === idx);
+      return s?.url || '#';
+    }
+
+    function confidenceClass(c) {
+      if (c === '高') return 'bg-emerald-100 text-emerald-700';
+      if (c === '低') return 'bg-zinc-100 text-zinc-500';
+      return 'bg-amber-100 text-amber-700'; // 中或未知
+    }
+
     // ── AI 打招呼语生成（Boss 直聘等平台主动打招呼用）──
     const GREETING_SYSTEM = '你是一名熟悉中国互联网招聘场景的求职顾问。输出简体中文纯文本，不要任何 markdown 标记、不要引号、不要解释性前后缀。';
     const GREETING_USER = (company, position, jd, resume) =>
@@ -2303,6 +2369,42 @@ ${String(text || '').slice(0, 8000)}
       settings.value.aiProviders[providerKey].visionModel = meta.defaultVisionModel;
     }
 
+    // ── Tavily Key ──
+    const tavilyKeyDraft = ref('');
+    const tavilyKeyShow = ref(false);
+    const tavilySaveLoading = ref(false);
+    const tavilySaveResult = ref('');
+
+    async function saveTavilyKeyAction() {
+      tavilySaveLoading.value = true;
+      tavilySaveResult.value = '';
+      try {
+        const draft = tavilyKeyDraft.value;
+        // 空字符串视为"不修改"；显式清除走 clearTavilyKey
+        if (draft === '' || draft === null || draft === undefined) {
+          tavilySaveResult.value = '✗ 请先输入 Key（如需清除请点"清除"按钮）';
+          return;
+        }
+        const updated = await JobTrackerAPI.settings.update({
+          tavily: { apiKey: draft === '__CLEAR__' ? '' : draft }
+        });
+        settings.value.tavily = updated.tavily || { hasKey: false, keyPreview: '' };
+        tavilyKeyDraft.value = '';
+        tavilySaveResult.value = '✓ 已保存';
+        setTimeout(() => { tavilySaveResult.value = ''; }, 2000);
+      } catch (e) {
+        tavilySaveResult.value = '✗ ' + (e.message || '保存失败');
+      } finally {
+        tavilySaveLoading.value = false;
+      }
+    }
+
+    async function clearTavilyKey() {
+      if (!confirm('确认清除 Tavily API Key？"全网情报"功能将无法使用。')) return;
+      tavilyKeyDraft.value = '__CLEAR__';
+      await saveTavilyKeyAction();
+    }
+
     // ── 通知配置（手动保存 + 测试发送）──
     // webhookUrl 不在响应里明文返回（脱敏），所以前端用 draft 单独管理
     const notifyDraft = reactive({
@@ -2480,6 +2582,8 @@ ${String(text || '').slice(0, 8000)}
       } else if (newPage === 'detail') {
         detailTab.value = 'info';
         cancelInterview();
+        intelError.value = '';
+        intelStats.value = null;
       } else if (newPage === 'stats') {
         loadStats();
       }
@@ -2593,6 +2697,12 @@ ${String(text || '').slice(0, 8000)}
       aiConfigSaveLoading, aiConfigSaveResult,
       saveProviderConfig, clearProviderKey, resetProviderDefaults,
       updateRouting,
+      // 全网情报
+      intelLoading, intelError, intelStats, runIntelSearch,
+      formatIntelTime, intelRoundLabel, hasIntelInterviews, intelSourceUrl, confidenceClass,
+      // Tavily Key
+      tavilyKeyDraft, tavilyKeyShow, tavilySaveLoading, tavilySaveResult,
+      saveTavilyKeyAction, clearTavilyKey,
     };
   }
 }).mount('#app');

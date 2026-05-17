@@ -7,6 +7,11 @@ const JSON_FIELDS = new Set([
   'matchGaps'
 ]);
 
+// JSON 列中以"对象"为根的字段（区别于上面以数组为根）。
+// intel 存的是 { writtenTests, interviews, salary, sources, fetchedAt } 结构体，
+// 默认值/序列化都按对象处理，避免被当成数组写成 "[]"。
+const JSON_OBJECT_FIELDS = new Set(['intel']);
+
 const APPLICATION_COLUMNS = [
   ['id', 'id'],
   ['company_name', 'companyName'],
@@ -40,6 +45,8 @@ const APPLICATION_COLUMNS = [
   ['greeting_message_at', 'greetingMessageAt'],
   ['cover_letter', 'coverLetter'],
   ['cover_letter_at', 'coverLetterAt'],
+  ['intel_json', 'intel'],
+  ['intel_at', 'intelAt'],
   ['display_order', 'displayOrder'],
   ['created_at', 'createdAt'],
   ['updated_at', 'updatedAt']
@@ -56,8 +63,13 @@ export function rowToApplication(row, statusHistory = []) {
     let v = row[db];
     if (JSON_FIELDS.has(camel)) {
       try { v = v ? JSON.parse(v) : []; } catch { v = []; }
+      out[camel] = v;
+    } else if (JSON_OBJECT_FIELDS.has(camel)) {
+      try { v = v ? JSON.parse(v) : null; } catch { v = null; }
+      out[camel] = v; // 没有就返回 null，前端按需展示
+    } else {
+      out[camel] = v ?? (NUMERIC_NULLABLE_FIELDS.has(camel) ? null : '');
     }
-    out[camel] = v ?? (JSON_FIELDS.has(camel) ? [] : (NUMERIC_NULLABLE_FIELDS.has(camel) ? null : ''));
   }
   out.statusHistory = statusHistory.map(h => ({
     status: h.status || '',
@@ -73,6 +85,9 @@ export function applicationToRow(app) {
     let v = app[camel];
     if (JSON_FIELDS.has(camel)) {
       v = JSON.stringify(Array.isArray(v) ? v : []);
+    } else if (JSON_OBJECT_FIELDS.has(camel)) {
+      // null / undefined → 写 NULL；否则 stringify 对象
+      v = (v && typeof v === 'object') ? JSON.stringify(v) : null;
     } else if (v === undefined || v === null) {
       v = NUMERIC_NULLABLE_FIELDS.has(camel) ? null : '';
     }

@@ -29,17 +29,24 @@ job-tracker/
 │   │   ├── backup.js           ← /api/backup/export + /import
 │   │   ├── notify.js           ← /api/notify/test + /api/notify/trigger-daily（debug）
 │   │   ├── stats.js            ← /api/stats/overview（漏斗 / 趋势 / Top 公司 / 平均周转，全在 SQL 聚合）
-│   │   └── scrape.js           ← /api/scrape/job（Boss + 通用 fallback，15s 超时）
-│   ├── ai-config.js            ← AI provider 默认值 / 9 个 purposes / routing 读写 / resolveCallTarget
+│   │   ├── scrape.js           ← /api/scrape/job（Boss + 通用 fallback，15s 超时）
+│   │   └── intel.js            ← /api/intel/search（Tavily 搜索 + LLM 结构化的全网面经聚合）
+│   ├── ai-config.js            ← AI provider 默认值 / 10 个 purposes / routing 读写 / resolveCallTarget
 │   └── services/
 │       ├── ai-deepseek.js      ← DeepSeek（OpenAI 兼容）
 │       ├── ai-qwen.js          ← 千问（DashScope 兼容模式）
 │       ├── ai-openai.js        ← OpenAI GPT（不传 temperature，兼容 GPT-5/o 系列只接受默认值）
 │       ├── ai-anthropic.js     ← Anthropic Claude（messages API，与 OpenAI 协议不同）
+│       ├── ai-router.js        ← callWithFallback / isVisionPurpose（从 routes/ai.js 抽出，供 intel 等内部消费者复用）
+│       ├── tavily-key.js       ← Tavily Search API Key 存取与脱敏（settings KV `tavily_key` + .env 兜底）
 │       ├── notifier.js         ← `notify(event, payload)` 主入口 + load/save/maskNotifySettings + adapter 选择
 │       ├── notify-adapters/
 │       │   ├── generic.js      ← 通用 JSON Webhook
 │       │   └── wechat-work.js  ← 企业微信群机器人 markdown 消息
+│       ├── intel/
+│       │   ├── tavily.js       ← Tavily Search API 封装（fetch + AbortController + 标准化结果）
+│       │   ├── queries.js      ← (company, position, dimensions) → 笔/面/薪 多组 query 变体
+│       │   └── index.js        ← searchIntel(applicationId) 编排器：query → 并发 search → LLM 结构化 → 写回 DB
 │       └── scrapers/
 │           └── boss.js         ← `scrapeJob(url)`：fetch + regex 提取 meta/title + Boss 标题拆分 + 反爬检测
 ├── data/                       ← gitignore
@@ -100,7 +107,7 @@ services/ai-{deepseek|qwen|openai|anthropic}.js
 
 | 表 | 说明 |
 |---|---|
-| `applications` | 投递主表，数组字段（interviews/tasks/matchStrengths/matchGaps）作为 JSON 列存储 |
+| `applications` | 投递主表，数组字段（interviews/tasks/matchStrengths/matchGaps）作为 JSON 列存储；`intel_json` 为对象型 JSON 列（全网情报聚合结果，结构 { writtenTests, interviews:{round1..hr,other}, salary, sources, fetchedAt }），与用户手填的 interviews 数据完全隔离 |
 | `status_history` | 状态变更时间线，独立表（外键级联删） |
 | `resumes` | 简历主表（id/label/fileName/text/timestamps） |
 | `settings` | KV 表：`default_resume_id`、`custom_statuses`、`job_preferences`、`notify_settings`、`notify_state`、`ai_providers`（4 家 Key/baseUrl/textModel/visionModel JSON）、`ai_routing`（9 个 purpose → providerKey 映射） |
@@ -111,6 +118,7 @@ services/ai-{deepseek|qwen|openai|anthropic}.js
 - `job_preferences` — 求职偏好 JSON：targetPositions / targetCities / salaryMin / salaryMax / companyTypes / urgency。AI prompt 自动注入（5 个 purpose）
 - `notify_settings` — Webhook 配置 JSON：`{ webhookUrl, channel, events }`。返回前端时 URL 脱敏（只保留 host + 后 6 位）
 - `notify_state` — 调度器去重状态 JSON：`{ lastDailyAt: 'YYYY-MM-DD' }`
+- `tavily_key` — Tavily Search API Key 字符串。`.env TAVILY_API_KEY` 兜底。返回前端时仅给 `{ hasKey, keyPreview }`
 
 **为什么混合 JSON 列**：单用户量级几百条，前端把 Application 当胖对象操作，完全 normalize 会让前端改大量代码且无查询收益。
 
@@ -137,6 +145,8 @@ services/ai-{deepseek|qwen|openai|anthropic}.js
 | `/api/notify/trigger-daily` | POST | debug：手动触发每日摘要，绕过窗口和 dedup |
 | `/api/stats/overview` | GET | 漏斗 / 月度趋势 / Top 公司响应率 / 平均周转，全在 SQL 聚合 |
 | `/api/scrape/job` | POST | body `{ url }` → Boss + 通用 fallback 抓取，含 `blocked` 标志和 `note` 引导 |
+| `/api/intel/search` | POST | body `{ applicationId, dimensions? }` → Tavily 并发搜索（笔/面/薪 7+ 条 query）→ LLM 结构化 → 写入 `applications.intel_json` → 返回 `{ intel, queryStats }`。复用 `aiLimiter` 限流 |
+| `/api/intel/dimensions` | GET | 返回支持的搜索维度列表 |
 
 ---
 

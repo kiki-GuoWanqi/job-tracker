@@ -17,6 +17,7 @@ import {
   NOTIFY_EVENTS,
   NOTIFY_CHANNELS
 } from '../services/notifier.js';
+import { saveTavilyKey, maskTavilyForFrontend } from '../services/tavily-key.js';
 
 const router = Router();
 
@@ -102,6 +103,7 @@ function buildResponse() {
     aiRouting: routing,
     aiProviderMeta: providerMeta,
     aiPurposes: AI_PURPOSES,
+    tavily: maskTavilyForFrontend(),
     // 兼容旧字段（前端仍可用作 hasAnyKey 判断）
     hasDeepseekKey: Boolean(providers.deepseek?.apiKey),
     hasQwenKey:     Boolean(providers.qwen?.apiKey),
@@ -116,7 +118,7 @@ router.get('/', (_req, res) => {
 
 router.put('/', (req, res) => {
   const db = getDb();
-  const { defaultResumeId, customStatuses, jobPreferences, notifySettings, aiProviders, aiRouting } = req.body || {};
+  const { defaultResumeId, customStatuses, jobPreferences, notifySettings, aiProviders, aiRouting, tavily } = req.body || {};
 
   db.prepare('BEGIN').run();
   try {
@@ -138,6 +140,10 @@ router.put('/', (req, res) => {
     }
     if (aiRouting && typeof aiRouting === 'object') {
       saveRouting(aiRouting);
+    }
+    if (tavily && typeof tavily === 'object' && typeof tavily.apiKey === 'string') {
+      // 空串视为清除，与 ai provider 行为一致
+      saveTavilyKey(tavily.apiKey);
     }
     db.prepare('COMMIT').run();
   } catch (e) {

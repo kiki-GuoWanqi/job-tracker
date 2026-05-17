@@ -38,7 +38,9 @@ function runMigrations(db) {
     ['greeting_message_at', 'TEXT'],
     ['cover_letter', 'TEXT'],
     ['cover_letter_at', 'TEXT'],
-    ['display_order', 'REAL']
+    ['display_order', 'REAL'],
+    ['intel_json', 'TEXT'],
+    ['intel_at', 'TEXT']
   ];
   for (const [col, type] of additions) {
     if (!cols.has(col)) {

@@ -13,6 +13,7 @@ import backupRouter from './routes/backup.js';
 import notifyRouter from './routes/notify.js';
 import statsRouter from './routes/stats.js';
 import scrapeRouter from './routes/scrape.js';
+import intelRouter from './routes/intel.js';
 import { startScheduler } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -49,6 +50,7 @@ const aiLimiter = rateLimit({
   message: { error: 'AI 调用过于频繁，请稍后重试' }
 });
 app.use('/api/ai', aiLimiter, aiRouter);
+app.use('/api/intel', aiLimiter, intelRouter);
 
 app.use(express.static(projectRoot, {
   index: 'index.html',

@@ -54,6 +54,8 @@
 - [2026-05-15] **Phase 2.2 — 数据统计面板**：新增 `server/routes/stats.js` 的 `/api/stats/overview`，所有聚合在 SQL 完成（按 status 分组的 5 段漏斗、近 6 个月趋势补零、Top10 公司响应率、status_history 算两段平均周转）；自定义状态归到「已投递」桶，「响应」=状态脱离待投递/已投递待回复；前端新增 `#stats` 路由 + 导航入口「数据」；引入 Chart.js 4.4.1 CDN，画水平漏斗条形图 + 月度趋势折线图，Top 公司用表格、周转用 KPI 卡；首次进页或刷新都重新 fetch + destroy 旧 chart 实例
 - [2026-05-15] **Phase 3 — 半自动 Boss JD 抓取**：新增 `server/services/scrapers/boss.js` 的 `scrapeJob(url)`（含通用 fallback），用浏览器 UA + regex 提取 `<title>` / `og:title` / `og:description` / `meta description`，按 Boss 标题常见格式（`岗位_公司_BOSS直聘`、`岗位 - 公司 - 25-40K - 直聘`）拆出 companyName/position/salary；检测「访问异常 / 安全验证」关键字和过短壳页面，置 `blocked` 标志并设清晰 `note` 引导用户切到截图 OCR；不引入 cheerio，保持零原生依赖原则；新增 `/api/scrape/job` 路由，15s 超时；前端 add 模式表单顶部加 Beta 抓取卡片，**只覆盖空字段不抢用户已有输入**；resetForm 联动清空抓取状态；Boss 反爬强，乐观情况能拿到标题，常见情况是空壳页面，兜底由现有 `jd_ocr` 截图流程承接
 
+- [2026-05-17] **全网情报聚合 Agent**：新增 `intel_summary` AI purpose + 2 列（`intel_json`/`intel_at`，runMigrations 自动补）+ 新 KV `tavily_key`（沿用脱敏模式）；后端把 `routes/ai.js` 的 `callWithFallback` 抽到 `services/ai-router.js` 供内部复用；新增 `services/intel/{tavily,queries,index}.js` 与 `routes/intel.js`：用户在投递详情按按钮 → POST `/api/intel/search` → Tavily 并发跑 7 条 query（笔/面/薪 3 维度 × 2-3 变体，include_domains=牛客/看准/知乎等）→ 去重打编号 → 走 `intel_summary` 路由 LLM 输出结构化 JSON（writtenTests/interviews 按轮次/salary，每条带 sourceIndex + confidence）→ 写回 `applications.intel_json`；前端详情页加「全网情报」Tab，三块折叠面板 + 全部来源；设置页「模型配置」加 Tavily Key 卡片；`/api/intel/*` 复用现有 `aiLimiter`；mappers 加 `JSON_OBJECT_FIELDS` 区分对象型 JSON 列与数组型；runIntelSearch 用 `suppressWatch + lastSentByAppId` 模式避免 watch 把 intel 又 PUT 回后端
+
 ## 后续迭代待办
 - [ ] 投递时间线可视化
 - [x] 统计分析面板（转化率、通过率）— Phase 2.2 完成

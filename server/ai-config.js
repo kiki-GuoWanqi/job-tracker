@@ -50,6 +50,7 @@ export const AI_PURPOSES = [
   { key: 'cover_letter',       label: '求职信生成',        kind: 'text'   },
   { key: 'jd_extract',         label: 'JD 文本结构化提取',  kind: 'text'   },
   { key: 'jd_ocr',             label: 'JD 截图识别',      kind: 'vision' },
+  { key: 'intel_summary',      label: '岗位情报总结',     kind: 'text'   },
   { key: 'connection_test',    label: '连接测试',         kind: 'text'   }
 ];
 
@@ -63,6 +64,7 @@ export const DEFAULT_ROUTING = {
   cover_letter:       'deepseek',
   jd_extract:         'deepseek',
   jd_ocr:             'qwen',
+  intel_summary:      'deepseek',
   connection_test:    'deepseek'
 };
 
