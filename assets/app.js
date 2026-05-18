@@ -17,6 +17,16 @@ const STATUS_BADGE = {
   '已挂':        { bg: 'bg-rose-50',    text: 'text-rose-600',   dot: 'bg-rose-400'   },
 };
 
+const SOURCE_OPTIONS = ['官网', '公众号', '内推', 'Boss直聘', '实习僧', '其他'];
+const SOURCE_BADGE = {
+  '官网':     { bg: 'bg-blue-50',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
+  '公众号':   { bg: 'bg-green-50',  text: 'text-green-700',  dot: 'bg-green-500'  },
+  '内推':     { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-500' },
+  'Boss直聘': { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500' },
+  '实习僧':   { bg: 'bg-cyan-50',   text: 'text-cyan-700',   dot: 'bg-cyan-500'   },
+  '其他':     { bg: 'bg-zinc-50',   text: 'text-zinc-600',   dot: 'bg-zinc-400'   },
+};
+
 function statusBadgeClass(status) {
   const s = STATUS_BADGE[status] || { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-500' };
   return `${s.bg} ${s.text}`;
@@ -101,7 +111,7 @@ createApp({
     function parseRoute() {
       const hash = window.location.hash.replace(/^#\/?/, '') || 'list';
       const [p, id = ''] = hash.split('/');
-      const valid = ['list', 'add', 'edit', 'detail', 'settings', 'offers', 'archived', 'calendar', 'stats'];
+      const valid = ['list', 'add', 'edit', 'detail', 'settings', 'offers', 'archived', 'calendar', 'stats', 'qbank'];
       page.value = valid.includes(p) ? p : 'notfound';
       routeId.value = id;
     }
@@ -2021,6 +2031,7 @@ ${resume}${buildPreferencesContext()}
         offerSalary: '', jdRaw: '', jdFormatted: '',
         examDate: '', nextInterviewDate: '', offerDeadline: '',
         resumeId: settings.value.defaultResumeId || '',
+        source: '',
       });
       errors.companyName = ''; errors.position = '';
       jdFormatError.value = '';
@@ -2170,6 +2181,7 @@ ${String(text || '').slice(0, 8000)}
         nextInterviewDate: app.nextInterviewDate || '',
         offerDeadline: app.offerDeadline || '',
         resumeId: app.resumeId || '',
+        source: app.source || '',
       });
       errors.companyName = ''; errors.position = '';
       jdFormatError.value = '';
@@ -2200,6 +2212,7 @@ ${String(text || '').slice(0, 8000)}
         nextInterviewDate: form.nextInterviewDate || '',
         offerDeadline:     form.offerDeadline || '',
         resumeId:          form.resumeId || '',
+        source:            form.source || '',
         updatedAt:         now,
       };
       if (page.value === 'add') {
@@ -2499,19 +2512,312 @@ ${String(text || '').slice(0, 8000)}
       }
     }
 
+    // ── 归档复盘 ──
+    const ARCHIVED_GRADIENT = {
+      '简历关': 'linear-gradient(90deg, #6366f1, #06b6d4)',
+      '笔试关': 'linear-gradient(90deg, #f97316, #fb923c)',
+      '一面关': 'linear-gradient(90deg, #f59e0b, #fbbf24)',
+      '二面+关': 'linear-gradient(90deg, #f43f5e, #f59e0b)',
+    };
+
+    function getArchivedFailStage(app) {
+      const history = app.statusHistory || [];
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].status !== '已挂') {
+          const s = history[i].status;
+          const r = history[i].round || '';
+          if (s === '已投递待回复' || s === '待投递' || s === '待笔试') return '简历关';
+          if (s === '笔试完待通知') return '笔试关';
+          if (s === '面试中') return (r === '一面' || !r) ? '一面关' : '二面+关';
+          return '简历关';
+        }
+      }
+      return '简历关';
+    }
+
+    const archivedFunnel = computed(() => {
+      const allArchived = applications.value.filter(a => a.status === '已挂');
+      const stages = {};
+      allArchived.forEach(app => {
+        const stage = getArchivedFailStage(app);
+        stages[stage] = (stages[stage] || 0) + 1;
+      });
+      const total = allArchived.length;
+      const order = ['简历关', '笔试关', '一面关', '二面+关'];
+      return order
+        .filter(s => stages[s])
+        .map(stage => ({
+          stage,
+          count: stages[stage],
+          pct: total > 0 ? Math.round((stages[stage] / total) * 100) : 0,
+          color: ARCHIVED_GRADIENT[stage] || 'linear-gradient(90deg, #94a3b8, #cbd5e1)',
+        }));
+    });
+
+    const archivedAvgDays = computed(() => {
+      let total = 0, count = 0;
+      applications.value.filter(a => a.status === '已挂').forEach(app => {
+        if (app.applicationDate && app.updatedAt) {
+          const ad = new Date(app.applicationDate), ud = new Date(app.updatedAt);
+          if (!isNaN(ad) && !isNaN(ud) && ud > ad) {
+            total += (ud - ad) / 86400000;
+            count++;
+          }
+        }
+      });
+      return count > 0 ? Math.round(total / count) : null;
+    });
+
+    function onPostMortemInput(app, value) {
+      app.postMortem = value;
+      app.postMortemUpdatedAt = new Date().toISOString();
+    }
+
+    // ── 面试题库（localStorage） ──
+    const QBANK_KEY = 'jobtracker_qbank_v1';
+
+    function loadQuestionBank() {
+      try { return JSON.parse(localStorage.getItem(QBANK_KEY) || '[]'); }
+      catch { return []; }
+    }
+    function saveQuestionBank(data) {
+      try { localStorage.setItem(QBANK_KEY, JSON.stringify(data)); } catch {}
+    }
+
+    function tryParseAIJson(raw) {
+      let text = (raw || '').trim();
+      const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (m) text = m[1];
+      if (!/^\s*[\[{]/.test(text)) {
+        const bracket = text.match(/(\[[\s\S]*\])/);
+        if (bracket) text = bracket[1];
+      }
+      return JSON.parse(text);
+    }
+
+    const questionBank    = ref(loadQuestionBank());
+    const qbankSearch     = ref('');
+    const qbankFilterCompany = ref('');
+    const qbankFilterRound   = ref('');
+    const qbankExtracting    = ref(false);
+    const qbankProgress      = reactive({ current: 0, total: 0 });
+    const qbankSelectedAppId = ref(null);
+
+    const qbankCompanies = computed(() => {
+      const s = new Set();
+      questionBank.value.forEach(q => { if (q.company) s.add(q.company); });
+      return [...s].sort();
+    });
+    const qbankRounds = computed(() => {
+      const s = new Set();
+      questionBank.value.forEach(q => { if (q.round) s.add(q.round); });
+      return [...s].sort();
+    });
+    const filteredQBank = computed(() => {
+      let list = questionBank.value;
+      const kw = qbankSearch.value.trim().toLowerCase();
+      if (kw) list = list.filter(q => q.question.toLowerCase().includes(kw));
+      if (qbankFilterCompany.value) list = list.filter(q => q.company === qbankFilterCompany.value);
+      if (qbankFilterRound.value)   list = list.filter(q => q.round === qbankFilterRound.value);
+      return list;
+    });
+    const qbankGroupedApps = computed(() => {
+      const groups = {};
+      filteredQBank.value.forEach(q => {
+        if (!groups[q.appId]) groups[q.appId] = { appId: q.appId, company: q.company, position: q.position, rounds: new Set(), questions: [] };
+        groups[q.appId].questions.push(q);
+        groups[q.appId].rounds.add(q.round);
+      });
+      return Object.values(groups).map(g => ({
+        appId: g.appId, company: g.company, position: g.position,
+        rounds: [...g.rounds].sort(), count: g.questions.length,
+      }));
+    });
+    const qbankSelectedQuestions = computed(() => {
+      if (!qbankSelectedAppId.value) return [];
+      return questionBank.value.filter(q => q.appId === qbankSelectedAppId.value);
+    });
+
+    function viewQBankApp(appId) { qbankSelectedAppId.value = appId; }
+    function backToQBankList() { qbankSelectedAppId.value = null; }
+
+    async function extractQBank() {
+      if (!hasAnyKey()) {
+        if (confirm('未配置 AI API Key，前往设置页配置？')) window.location.hash = '#settings';
+        return;
+      }
+      const candidates = [];
+      applications.value.forEach(app => {
+        (app.interviews || []).forEach(iv => {
+          const content = [
+            iv.notes || '',
+            (iv.questions || []).map(q => `Q: ${q.question}\nA: ${q.answer || ''}`).join('\n\n'),
+          ].filter(Boolean).join('\n\n');
+          if (content.trim()) candidates.push({ app, iv, content });
+        });
+      });
+      if (!candidates.length) { alert('暂无面经记录可提取'); return; }
+
+      qbankExtracting.value = true;
+      qbankProgress.current = 0;
+      qbankProgress.total = candidates.length;
+      const bank = [...questionBank.value];
+      const seen = new Set(bank.map(q => q.question.trim()));
+
+      // 先把面经 questions 里已有参考答案的题目直接入库，保证 refAnswer 不丢失
+      for (const { app, iv } of candidates) {
+        for (const iq of (iv.questions || [])) {
+          const qText = (iq.question || '').trim();
+          if (!qText || seen.has(qText)) continue;
+          seen.add(qText);
+          bank.push({
+            question: qText,
+            myAnswer: (iq.answer || '').trim(),
+            refAnswer: (iq.refAnswer || '').trim(),
+            company: app.companyName,
+            position: app.position,
+            round: iv.round || '未知',
+            interviewId: iv.id,
+            appId: app.id,
+          });
+        }
+      }
+      let failCount = 0, newCount = 0;
+      const SYSTEM = '你是面试题目提取助手，从下面的面经内容中提取所有明确的面试问题，以 JSON 数组返回，每项包含 question 和 myAnswer 字段，myAnswer 填用户对该问题的回答原文，没有明确回答则留空字符串。只返回 JSON，不加任何说明。';
+
+      for (const { app, iv, content } of candidates) {
+        qbankProgress.current++;
+        try {
+          const raw = await callTextAI(SYSTEM, content, 'qbank_extract');
+          const arr = tryParseAIJson(raw);
+          if (!Array.isArray(arr)) { failCount++; continue; }
+          for (const item of arr) {
+            const qText = (item.question || '').trim();
+            if (!qText || seen.has(qText)) continue;
+            seen.add(qText);
+            newCount++;
+            bank.push({
+              question: qText,
+              myAnswer: (item.myAnswer || '').trim(),
+              refAnswer: '',
+              company: app.companyName,
+              position: app.position,
+              round: iv.round || '未知',
+              interviewId: iv.id,
+              appId: app.id,
+            });
+          }
+        } catch (e) {
+          failCount++;
+        }
+      }
+      // 回填 refAnswer：从原始面经 questions 中按题目文本精确匹配
+      for (const q of bank) {
+        if (q.refAnswer) continue;
+        const app = applications.value.find(a => a.id === q.appId);
+        if (!app) continue;
+        for (const iv of (app.interviews || [])) {
+          for (const iq of (iv.questions || [])) {
+            if ((iq.question || '').trim() === q.question && iq.refAnswer) {
+              q.refAnswer = iq.refAnswer;
+              break;
+            }
+          }
+          if (q.refAnswer) break;
+        }
+      }
+      if (bank.length > 200) bank.splice(200);
+      questionBank.value = bank;
+      saveQuestionBank(bank);
+      qbankExtracting.value = false;
+      if (newCount === 0 && failCount === 0) alert('未提取到新题目（所有问题均已存在于题库中）');
+      else if (failCount > 0) alert(`提取完成：新增 ${newCount} 题，${failCount} 条面经处理失败`);
+    }
+
+    // 自测模式
+    const qbankSelfTest = reactive({
+      active: false, questions: [], currentIndex: 0, showAnswer: false, scores: {},
+    });
+    const qbankSelfTestSummary = ref(null);
+
+    function startSelfTest(questions, startIdx) {
+      qbankSelfTest.active = true;
+      qbankSelfTest.questions = questions;
+      qbankSelfTest.currentIndex = startIdx || 0;
+      qbankSelfTest.showAnswer = false;
+      qbankSelfTest.scores = {};
+      qbankSelfTestSummary.value = null;
+    }
+
+    function scoreQBankQuestion(grade) {
+      qbankSelfTest.scores[qbankSelfTest.currentIndex] = grade;
+      if (qbankSelfTest.currentIndex < qbankSelfTest.questions.length - 1) {
+        qbankSelfTest.currentIndex++;
+        qbankSelfTest.showAnswer = false;
+      } else {
+        const summary = { good: 0, ok: 0, bad: 0, badQuestions: [] };
+        for (let i = 0; i < qbankSelfTest.questions.length; i++) {
+          const g = qbankSelfTest.scores[i] || 'ok';
+          summary[g]++;
+          if (g === 'bad') summary.badQuestions.push(qbankSelfTest.questions[i]);
+        }
+        qbankSelfTestSummary.value = summary;
+        qbankSelfTest.active = false;
+      }
+    }
+
+    function exitSelfTest() {
+      qbankSelfTest.active = false;
+      qbankSelfTestSummary.value = null;
+    }
+
     // ── 数据统计页 ──
+    const FUNNEL_COLORS = {
+      submitted: 'linear-gradient(90deg, rgba(99,102,241,0.40), rgba(79,70,229,0.85))',
+      screening: 'linear-gradient(90deg, rgba(245,158,11,0.40), rgba(217,119,6,0.85))',
+      interview: 'linear-gradient(90deg, rgba(139,92,246,0.40), rgba(109,40,217,0.85))',
+      offer:     'linear-gradient(90deg, rgba(16,185,129,0.40), rgba(5,150,105,0.85))',
+      rejected:  'linear-gradient(90deg, rgba(244,63,94,0.40), rgba(225,29,72,0.85))',
+    };
+    const FUNNEL_TRACKS = {
+      submitted: 'rgba(99,102,241,0.07)',
+      screening: 'rgba(245,158,11,0.07)',
+      interview: 'rgba(139,92,246,0.07)',
+      offer:     'rgba(16,185,129,0.07)',
+      rejected:  'rgba(244,63,94,0.07)',
+    };
+    const FUNNEL_TEXT = {
+      submitted: ['text-indigo-700', 'text-indigo-400'],
+      screening: ['text-amber-700',  'text-amber-400'],
+      interview: ['text-violet-700', 'text-violet-400'],
+      offer:     ['text-emerald-700','text-emerald-400'],
+      rejected:  ['text-rose-700',   'text-rose-400'],
+    };
+
     const statsData    = ref(null);
     const statsLoading = ref(false);
     const statsError   = ref('');
-    let funnelChart = null;
     let trendChart  = null;
+
+    const statsFunnelRows = computed(() => {
+      if (!statsData.value) return [];
+      const main = statsData.value.funnel.filter(f => f.key !== 'rejected');
+      const maxCount = main[0]?.count || 1;
+      return main.map((item, idx) => ({
+        ...item,
+        pct: maxCount > 0 ? Math.round(item.count / maxCount * 100) : 0,
+        barWidth: item.count > 0 ? Math.max(6, Math.round(item.count / maxCount * 100)) : 0,
+        dropRate: idx > 0 && main[idx - 1].count > 0
+          ? Math.round(item.count / main[idx - 1].count * 100)
+          : null,
+      }));
+    });
 
     async function loadStats() {
       statsLoading.value = true;
       statsError.value   = '';
       try {
         statsData.value = await JobTrackerAPI.stats.overview();
-        // 等 DOM 更新出 canvas
         await new Promise(r => requestAnimationFrame(r));
         await new Promise(r => requestAnimationFrame(r));
         renderStatsCharts();
@@ -2524,30 +2830,6 @@ ${String(text || '').slice(0, 8000)}
 
     function renderStatsCharts() {
       if (!statsData.value || typeof Chart === 'undefined') return;
-      const colorFunnel = ['#94a3b8', '#f59e0b', '#eab308', '#10b981', '#ef4444'];
-
-      const funnelEl = document.getElementById('chart-funnel');
-      if (funnelEl) {
-        if (funnelChart) funnelChart.destroy();
-        funnelChart = new Chart(funnelEl, {
-          type: 'bar',
-          data: {
-            labels: statsData.value.funnel.map(f => f.label),
-            datasets: [{
-              data: statsData.value.funnel.map(f => f.count),
-              backgroundColor: colorFunnel,
-              borderRadius: 6
-            }]
-          },
-          options: {
-            indexAxis: 'y',
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { beginAtZero: true, ticks: { precision: 0 } }
-            }
-          }
-        });
-      }
 
       const trendEl = document.getElementById('chart-trend');
       if (trendEl) {
@@ -2573,6 +2855,29 @@ ${String(text || '').slice(0, 8000)}
       }
     }
 
+    // ── 来源渠道统计（给统计页用） ──
+    const statsSourceData = computed(() => {
+      const sm = {};
+      applications.value.forEach(a => {
+        const src = a.source || '未填写';
+        if (!sm[src]) sm[src] = { total: 0, interviewed: 0, offered: 0 };
+        sm[src].total++;
+        const s = a.status;
+        if (['面试中', '笔试完待通知', '待笔试', '已 Offer', '已挂'].includes(s)) sm[src].interviewed++;
+        if (s === '已 Offer') sm[src].offered++;
+      });
+      return Object.entries(sm)
+        .map(([src, d]) => ({
+          src,
+          total: d.total,
+          interviewed: d.interviewed,
+          offered: d.offered,
+          interviewRate: d.total > 0 ? Math.round((d.interviewed / d.total) * 100) : 0,
+          badge: SOURCE_BADGE[src] || SOURCE_BADGE['其他'],
+        }))
+        .sort((a, b) => b.total - a.total);
+    });
+
     // ── 路由变化时初始化 ──
     watch([page, routeId], ([newPage, newId]) => {
       if (newPage === 'add') resetForm();
@@ -2586,6 +2891,9 @@ ${String(text || '').slice(0, 8000)}
         intelStats.value = null;
       } else if (newPage === 'stats') {
         loadStats();
+      } else if (newPage === 'qbank') {
+        questionBank.value = loadQuestionBank();
+        qbankSelectedAppId.value = null;
       }
       if (newPage === 'list') checkAndNotify();
     });
@@ -2685,7 +2993,18 @@ ${String(text || '').slice(0, 8000)}
       // 设置页子分页
       SETTINGS_TABS, settingsTab, settingsTabMeta,
       // 数据统计
-      statsData, statsLoading, statsError, loadStats,
+      statsData, statsLoading, statsError, loadStats, statsSourceData,
+      FUNNEL_COLORS, FUNNEL_TRACKS, FUNNEL_TEXT, statsFunnelRows,
+      // 归档复盘
+      archivedFunnel, archivedAvgDays, onPostMortemInput,
+      // 投递来源
+      SOURCE_OPTIONS, SOURCE_BADGE,
+      // 面试题库
+      questionBank, qbankSearch, qbankFilterCompany, qbankFilterRound,
+      qbankExtracting, qbankProgress, qbankSelectedAppId,
+      qbankCompanies, qbankRounds, filteredQBank, qbankGroupedApps, qbankSelectedQuestions,
+      viewQBankApp, backToQBankList, extractQBank,
+      qbankSelfTest, qbankSelfTestSummary, startSelfTest, scoreQBankQuestion, exitSelfTest,
       // JD 抓取（URL，多平台）
       scrapeUrl, scrapeLoading, scrapeError, scrapeNote, scrapePlatform, SCRAPE_PLATFORMS, scrapeFromUrl,
       // JD 提取（粘贴文本 + AI）

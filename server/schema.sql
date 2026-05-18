@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS applications (
   cover_letter_at TEXT,
   intel_json TEXT,
   intel_at TEXT,
+  source TEXT,
+  post_mortem TEXT,
+  post_mortem_updated_at TEXT,
   display_order REAL,
   created_at TEXT,
   updated_at TEXT

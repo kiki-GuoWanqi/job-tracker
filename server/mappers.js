@@ -47,6 +47,9 @@ const APPLICATION_COLUMNS = [
   ['cover_letter_at', 'coverLetterAt'],
   ['intel_json', 'intel'],
   ['intel_at', 'intelAt'],
+  ['source', 'source'],
+  ['post_mortem', 'postMortem'],
+  ['post_mortem_updated_at', 'postMortemUpdatedAt'],
   ['display_order', 'displayOrder'],
   ['created_at', 'createdAt'],
   ['updated_at', 'updatedAt']

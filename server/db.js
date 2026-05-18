@@ -40,7 +40,10 @@ function runMigrations(db) {
     ['cover_letter_at', 'TEXT'],
     ['display_order', 'REAL'],
     ['intel_json', 'TEXT'],
-    ['intel_at', 'TEXT']
+    ['intel_at', 'TEXT'],
+    ['source', 'TEXT'],
+    ['post_mortem', 'TEXT'],
+    ['post_mortem_updated_at', 'TEXT'],
   ];
   for (const [col, type] of additions) {
     if (!cols.has(col)) {

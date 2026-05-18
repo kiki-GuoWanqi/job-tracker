@@ -157,11 +157,14 @@ services/ai-{deepseek|qwen|openai|anthropic}.js
 - **AI Key 检测**：`hasAnyKey()` 读 `settings.hasDeepseekKey || settings.hasQwenKey`（来自后端响应）
 - **localStorage 兼容**：`jobtracker_notified_v1`（桌面通知去重表）仍存浏览器；其余字段已迁移
 - **迁移弹窗**：首次启动若检测到 `jobtracker_applications` 非空且后端为空，弹模态触发 `/api/backup/import`，迁移后原 key 改名为 `*_migrated_<ts>`
-- **路由**：Hash 路由（`#list / #add / #edit / #detail / #settings / #offers / #archived / #calendar / #stats`）
+- **路由**：Hash 路由（`#list / #add / #edit / #detail / #settings / #offers / #archived / #calendar / #stats / #qbank`）
 - **求职偏好注入**：`buildPreferencesContext()` 把 `settings.jobPreferences` 渲染成 prompt 末尾段落，注入 5 个 AI 功能（interview_analysis / company_research / greeting_message / cover_letter / match_score）。JD 格式化与参考答案故意不注入
 - **Webhook draft 模式**：URL 后端脱敏返回，前端用 `notifyDraft.webhookUrl` 单独管理；空串=保留旧值，`__CLEAR__` 哨兵值=清除
 - **统计图表**：Chart.js 4.4.1 CDN，进 `#stats` 路由时 fetch + 2 次 requestAnimationFrame 等 DOM 渲染再 render，destroy 旧 chart 避免 canvas 复用问题
 - **JD 抓取**：仅 add 模式可见；`scrapeFromUrl()` **只覆盖空字段**，不抢用户已有输入；`resetForm` 联动清空
+- **面试题库**：`jobtracker_qbank_v1`（localStorage），AI 从 `app.interviews[].notes/questions` 批量提取，最多 200 题；自测模式（好/模糊/不会三级评分）在同一页全屏蒙层渲染
+- **归档复盘**：`archivedFunnel` 从 `statusHistory` 推断失败关卡（简历关/笔试关/一面关/二面+关）；`postMortem` / `postMortemUpdatedAt` 字段写入 SQLite，在 detail 页「复盘」Tab 编辑
+- **来源渠道统计**：`source` 字段（表单 select）持久化到 SQLite；`statsSourceData` computed 在统计页展示各渠道投递数/面试率/Offer 数
 
 ---
 

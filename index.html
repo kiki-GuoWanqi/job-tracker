@@ -694,7 +694,7 @@
           日历
           <span v-if="calendarTodayCount" class="ml-1 text-[10px] tabular bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full">{{ calendarTodayCount }}</span>
         </a>
-        <a href="#stats" :class="navClass(['stats'])">数据</a>
+        <a href="#qbank" :class="navClass(['qbank'])">题库</a>
         <a href="#offers" :class="navClass(['offers'])">
           Offer
           <span v-if="offerCount" class="ml-1 text-[10px] tabular bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">{{ offerCount }}</span>
@@ -703,6 +703,7 @@
           归档
           <span v-if="archivedCount" class="ml-1 text-[10px] tabular bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{{ archivedCount }}</span>
         </a>
+        <a href="#stats" :class="navClass(['stats'])">数据</a>
         <a href="#settings" :class="navClass(['settings'])">设置</a>
       </div>
     </div>
@@ -1053,6 +1054,38 @@
         </div>
       </div>
 
+      <!-- 复盘统计卡片 -->
+      <div v-if="archivedApps.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+        <!-- 失败关卡漏斗 -->
+        <div class="card p-5">
+          <h3 class="text-[13px] font-semibold text-zinc-700 mb-3">失败关卡分布</h3>
+          <div v-if="archivedFunnel.length === 0" class="text-[12px] text-zinc-400 py-4 text-center">暂无数据</div>
+          <div v-else class="space-y-2.5">
+            <div v-for="item in archivedFunnel" :key="item.stage" class="flex items-center gap-3">
+              <div class="w-16 shrink-0 text-[12px] text-zinc-600 font-medium">{{ item.stage }}</div>
+              <div class="flex-1 h-2 bg-zinc-100 rounded-full overflow-hidden">
+                <div class="h-2 rounded-full transition-all" :style="{ width: item.pct + '%', background: item.color }"></div>
+              </div>
+              <div class="w-16 text-right text-[11px] text-zinc-500 tabular shrink-0">{{ item.count }} 条 · {{ item.pct }}%</div>
+            </div>
+          </div>
+        </div>
+        <!-- 平均天数 -->
+        <div class="card p-5 flex flex-col justify-center">
+          <h3 class="text-[13px] font-semibold text-zinc-700 mb-3">平均在推天数</h3>
+          <div class="text-[36px] font-bold text-zinc-800 tabular leading-none mb-1">
+            {{ archivedAvgDays !== null ? archivedAvgDays : '—' }}
+            <span v-if="archivedAvgDays !== null" class="text-[16px] font-normal text-zinc-500 ml-1">天</span>
+          </div>
+          <p class="text-[11px] text-zinc-400">从投递日到结束（已挂）的平均时长</p>
+          <div class="mt-4 pt-4 border-t border-zinc-100 flex items-center gap-2">
+            <span class="text-[12px] text-zinc-500">共 {{ archivedApps.length }} 条归档</span>
+            <span class="text-zinc-300">·</span>
+            <span class="text-[12px] text-zinc-500">{{ archivedApps.filter(a => a.postMortem).length }} 条已复盘</span>
+          </div>
+        </div>
+      </div>
+
       <div v-if="archivedApps.length === 0" class="card p-16 text-center fade-in">
         <div class="w-14 h-14 rounded-2xl bg-zinc-100 mx-auto mb-4 flex items-center justify-center text-2xl">📭</div>
         <p class="text-zinc-900 font-medium mb-1">归档区是空的</p>
@@ -1074,9 +1107,14 @@
               </p>
               <p class="text-[10.5px] text-zinc-400 tabular mt-2">投递 · {{ app.applicationDate }}</p>
             </div>
-            <span class="shrink-0 text-[10.5px] text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-medium">
-              已挂
-            </span>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span v-if="app.postMortem" class="text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full font-medium">
+                ✓ 已复盘
+              </span>
+              <span class="text-[10.5px] text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-medium">
+                已挂
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -1291,9 +1329,66 @@
         <!-- 漏斗 + 月度趋势 -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
           <div class="card p-6">
-            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">转化漏斗</h2>
-            <div style="height: 260px;">
-              <canvas id="chart-funnel"></canvas>
+            <div class="flex items-center justify-between mb-5">
+              <h2 class="text-[14px] font-semibold text-zinc-900">转化漏斗</h2>
+              <span class="text-[11px] text-zinc-400 tabular">
+                共 {{ statsData.overview.totalApps }} 条投递
+              </span>
+            </div>
+
+            <!-- 自定义漏斗：居中收窄 + 各阶段透明渐变色 -->
+            <div class="space-y-0">
+              <template v-for="(row, idx) in statsFunnelRows" :key="row.key">
+                <!-- 阶段间：绝对数量 + 转化率 -->
+                <div v-if="idx > 0" class="flex items-center gap-3 py-1">
+                  <div class="w-[68px] shrink-0"></div>
+                  <div class="flex-1 flex items-center justify-center gap-1.5">
+                    <div class="h-3 w-px bg-zinc-200"></div>
+                    <span class="text-[11px] text-zinc-400 tabular">
+                      {{ row.count }} 条进入
+                    </span>
+                    <div class="h-3 w-px bg-zinc-200"></div>
+                  </div>
+                </div>
+                <!-- 漏斗行 -->
+                <div class="flex items-center gap-3">
+                  <!-- 阶段标签 -->
+                  <div class="w-[68px] text-right text-[11.5px] text-zinc-500 shrink-0 leading-tight">
+                    {{ row.label }}
+                  </div>
+                  <!-- 条形轨道：居中填充造成漏斗收窄效果 -->
+                  <div class="flex-1 h-10 relative rounded-xl overflow-hidden"
+                       :style="{ background: FUNNEL_TRACKS[row.key] }">
+                    <div class="absolute inset-y-1 rounded-lg transition-all"
+                         :style="{
+                           left:  ((100 - row.barWidth) / 2) + '%',
+                           right: ((100 - row.barWidth) / 2) + '%',
+                           background: FUNNEL_COLORS[row.key]
+                         }">
+                    </div>
+                    <!-- 条形内叠层：仅显示条数 -->
+                    <div class="absolute inset-0 flex items-center justify-center">
+                      <span class="text-[14px] font-bold tabular leading-none"
+                            :class="row.barWidth > 25 ? 'text-white drop-shadow-sm' : FUNNEL_TEXT[row.key][0]">
+                        {{ row.count }} 条
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 已淘汰 -->
+              <div v-if="statsData.funnel.find(f => f.key === 'rejected')?.count > 0"
+                   class="flex items-center gap-3 pt-3.5 mt-1.5 border-t border-zinc-100">
+                <div class="w-[68px] text-right text-[11px] text-zinc-400 shrink-0">已淘汰</div>
+                <div class="flex items-center gap-1.5">
+                  <div class="w-1.5 h-1.5 rounded-full bg-rose-300 shrink-0"></div>
+                  <span class="text-[13px] font-semibold text-rose-400 tabular">
+                    {{ statsData.funnel.find(f => f.key === 'rejected').count }} 条
+                  </span>
+                  <span class="text-[11px] text-zinc-400">以「已挂」结束</span>
+                </div>
+              </div>
             </div>
           </div>
           <div class="card p-6">
@@ -1304,63 +1399,68 @@
           </div>
         </div>
 
-        <!-- Top 公司 + 状态周转时长 -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="card p-6">
-            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">Top 公司响应率<span class="text-[11px] font-normal text-zinc-400 ml-2">（投递≥2 家）</span></h2>
-            <div v-if="!statsData.topCompanies.length" class="text-[13px] text-zinc-500 py-6 text-center">
-              暂无重复投递的公司
+        <!-- 平均周转时长 -->
+        <div class="card p-6">
+          <h2 class="text-[14px] font-semibold text-zinc-900 mb-5">平均周转时长</h2>
+          <div class="grid grid-cols-2 gap-6">
+            <div>
+              <div class="text-[11px] text-zinc-400 mb-1">投递 → 首次响应</div>
+              <div class="text-[28px] font-bold text-zinc-900 tabular leading-none">
+                {{ statsData.timing.submitToResponse.avgDays !== null ? statsData.timing.submitToResponse.avgDays : '—' }}
+                <span v-if="statsData.timing.submitToResponse.avgDays !== null" class="text-[14px] font-normal text-zinc-400 ml-0.5">天</span>
+              </div>
+              <div class="text-[11px] text-zinc-400 mt-1.5 tabular">样本 {{ statsData.timing.submitToResponse.count }} 条</div>
             </div>
-            <table v-else class="w-full text-[13px]">
-              <thead class="text-[11px] text-zinc-500">
-                <tr>
-                  <th class="text-left pb-2">公司</th>
-                  <th class="text-right pb-2 tabular">投递</th>
-                  <th class="text-right pb-2 tabular">有响应</th>
-                  <th class="text-right pb-2 tabular">响应率</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="c in statsData.topCompanies" :key="c.company" class="border-t border-zinc-100">
-                  <td class="py-1.5 text-zinc-800">{{ c.company }}</td>
-                  <td class="text-right tabular text-zinc-700">{{ c.total }}</td>
-                  <td class="text-right tabular text-zinc-700">{{ c.responded }}</td>
-                  <td class="text-right tabular"
-                      :class="c.rate >= 50 ? 'text-emerald-600' : c.rate > 0 ? 'text-amber-600' : 'text-zinc-400'">
-                    {{ c.rate }}%
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div>
+              <div class="text-[11px] text-zinc-400 mb-1">首次响应 → Offer / 拒</div>
+              <div class="text-[28px] font-bold text-zinc-900 tabular leading-none">
+                {{ statsData.timing.responseToFinal.avgDays !== null ? statsData.timing.responseToFinal.avgDays : '—' }}
+                <span v-if="statsData.timing.responseToFinal.avgDays !== null" class="text-[14px] font-normal text-zinc-400 ml-0.5">天</span>
+              </div>
+              <div class="text-[11px] text-zinc-400 mt-1.5 tabular">样本 {{ statsData.timing.responseToFinal.count }} 条</div>
+            </div>
           </div>
+          <p class="text-[11px] text-zinc-400 mt-4 pt-4 border-t border-zinc-100 leading-relaxed">
+            基于「状态变更时间轴」聚合，过滤异常值（&lt;0 或 &gt;365 天）。样本越多越可靠。
+          </p>
+        </div>
+      </div>
 
-          <div class="card p-6">
-            <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">平均周转时长</h2>
-            <div class="space-y-4">
-              <div>
-                <div class="flex items-baseline justify-between mb-1">
-                  <span class="text-[12px] text-zinc-500">投递 → 首次响应</span>
-                  <span class="text-[11px] text-zinc-400 tabular">样本 {{ statsData.timing.submitToResponse.count }} 条</span>
-                </div>
-                <div class="text-2xl font-semibold text-zinc-900 tabular">
-                  {{ statsData.timing.submitToResponse.avgDays !== null ? statsData.timing.submitToResponse.avgDays + ' 天' : '—' }}
-                </div>
-              </div>
-              <div class="border-t border-zinc-100"></div>
-              <div>
-                <div class="flex items-baseline justify-between mb-1">
-                  <span class="text-[12px] text-zinc-500">首次响应 → Offer / 拒</span>
-                  <span class="text-[11px] text-zinc-400 tabular">样本 {{ statsData.timing.responseToFinal.count }} 条</span>
-                </div>
-                <div class="text-2xl font-semibold text-zinc-900 tabular">
-                  {{ statsData.timing.responseToFinal.avgDays !== null ? statsData.timing.responseToFinal.avgDays + ' 天' : '—' }}
-                </div>
-              </div>
-              <p class="text-[11px] text-zinc-400 pt-2 leading-relaxed">
-                基于「状态变更时间轴」聚合，过滤异常值（&lt;0 或 &gt;365 天）。样本越多越可靠。
-              </p>
-            </div>
-          </div>
+      <!-- 来源渠道统计 -->
+      <div v-if="statsSourceData.length > 0" class="card p-6 mt-4">
+        <h2 class="text-[14px] font-semibold text-zinc-900 mb-4">投递渠道分布</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[13px]">
+            <thead class="text-[11px] text-zinc-500">
+              <tr>
+                <th class="text-left pb-2">渠道</th>
+                <th class="text-right pb-2 tabular">投递数</th>
+                <th class="text-right pb-2 tabular">进入面试</th>
+                <th class="text-right pb-2 tabular">面试率</th>
+                <th class="text-right pb-2 tabular">Offer</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in statsSourceData" :key="row.src" class="border-t border-zinc-100">
+                <td class="py-1.5">
+                  <span :class="['inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium border',
+                    row.badge.bg, row.badge.text]">
+                    <span :class="['w-1.5 h-1.5 rounded-full', row.badge.dot]"></span>
+                    {{ row.src }}
+                  </span>
+                </td>
+                <td class="text-right tabular text-zinc-700">{{ row.total }}</td>
+                <td class="text-right tabular text-zinc-700">{{ row.interviewed }}</td>
+                <td class="text-right tabular"
+                    :class="row.interviewRate >= 50 ? 'text-emerald-600' : row.interviewRate > 0 ? 'text-amber-600' : 'text-zinc-400'">
+                  {{ row.interviewRate }}%
+                </td>
+                <td class="text-right tabular" :class="row.offered > 0 ? 'text-emerald-600 font-semibold' : 'text-zinc-400'">
+                  {{ row.offered || '—' }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -1485,6 +1585,13 @@
               <div>
                 <label class="block text-[13px] font-medium text-zinc-700 mb-1.5">工作城市</label>
                 <input v-model="form.workCity" type="text" placeholder="北京 / 上海 / 远程…" class="field" />
+              </div>
+              <div>
+                <label class="block text-[13px] font-medium text-zinc-700 mb-1.5">投递渠道</label>
+                <select v-model="form.source" class="field">
+                  <option value="">未填写</option>
+                  <option v-for="s in SOURCE_OPTIONS" :key="s" :value="s">{{ s }}</option>
+                </select>
               </div>
             </div>
 
@@ -1802,6 +1909,10 @@
           <button @click="detailTab = 'interviews'" :class="['tab-trigger', detailTab === 'interviews' && 'active']">
             面经
             <span class="ml-1 text-[11px] tabular bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{{ currentApp.interviews.length }}</span>
+          </button>
+          <button v-if="currentApp.status === '已挂'" @click="detailTab = 'postmortem'" :class="['tab-trigger', detailTab === 'postmortem' && 'active']">
+            复盘
+            <span v-if="currentApp.postMortem" class="ml-1 text-[11px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">✓</span>
           </button>
           <button @click="detailTab = 'intel'" :class="['tab-trigger', detailTab === 'intel' && 'active']">
             全网情报
@@ -2480,6 +2591,184 @@
 
         </div>
 
+        <!-- 复盘 Tab -->
+        <div v-else-if="detailTab === 'postmortem'" class="fade-in space-y-4">
+          <div class="card p-5">
+            <h3 class="text-[14px] font-semibold text-zinc-800 mb-1 flex items-center gap-2">
+              📝 复盘反思
+            </h3>
+            <p v-if="currentApp.postMortem && currentApp.postMortemUpdatedAt"
+               class="text-[11px] text-zinc-400 mb-2 tabular">
+              最后更新于 {{ currentApp.postMortemUpdatedAt.slice(0, 10) }}
+            </p>
+            <textarea
+              :value="currentApp.postMortem || ''"
+              @input="onPostMortemInput(currentApp, $event.target.value)"
+              placeholder="记录这次挂掉的原因、面试中的不足、下次改进方向…"
+              class="field w-full resize-y text-[13px] leading-relaxed"
+              style="min-height: 120px;"
+            ></textarea>
+            <p class="text-[11px] text-zinc-400 mt-2">自动保存，下次进入这条投递仍可查看</p>
+          </div>
+        </div>
+
+      </template>
+    </div>
+
+    <!-- ════════════════════════════════════════
+         面试题库（qbank）
+         ════════════════════════════════════════ -->
+    <div v-else-if="page === 'qbank'" class="fade-in">
+      <!-- 头部 -->
+      <div class="flex items-end justify-between mb-7 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-[26px] font-semibold text-zinc-900 tracking-tight flex items-center gap-3">
+            <span class="icon-chip" style="background: linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(6,182,212,0.10) 100%); color: #6366f1;">📚</span>
+            面试题库
+          </h1>
+          <p class="text-sm text-zinc-500 mt-1 tabular">{{ questionBank.length }} 道题 · AI 从面经自动提取</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="startSelfTest(filteredQBank, 0)"
+                  :disabled="filteredQBank.length === 0"
+                  class="btn btn-secondary btn-sm">
+            自测模式
+          </button>
+          <button @click="extractQBank"
+                  :disabled="qbankExtracting"
+                  class="btn btn-primary btn-sm">
+            <span v-if="qbankExtracting" class="spinner"></span>
+            <span v-if="qbankExtracting">提取中 {{ qbankProgress.current }}/{{ qbankProgress.total }}</span>
+            <span v-else>AI 提取题目</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 自测模式蒙层 -->
+      <div v-if="qbankSelfTest.active" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+        <div class="card w-full max-w-lg p-8 shadow-2xl">
+          <div class="flex items-center justify-between mb-6">
+            <span class="text-[12px] text-zinc-500 tabular">{{ qbankSelfTest.currentIndex + 1 }} / {{ qbankSelfTest.questions.length }}</span>
+            <button @click="exitSelfTest" class="text-zinc-400 hover:text-zinc-600 text-sm">退出</button>
+          </div>
+          <p class="text-[16px] font-semibold text-zinc-900 leading-relaxed mb-6">
+            {{ qbankSelfTest.questions[qbankSelfTest.currentIndex]?.question }}
+          </p>
+          <div v-if="!qbankSelfTest.showAnswer" class="text-center">
+            <button @click="qbankSelfTest.showAnswer = true" class="btn btn-secondary">查看答案</button>
+          </div>
+          <div v-else class="space-y-3">
+            <div class="bg-zinc-50 rounded-xl p-4 text-[13px] text-zinc-700 leading-relaxed whitespace-pre-wrap">
+              {{ qbankSelfTest.questions[qbankSelfTest.currentIndex]?.myAnswer || '（无作答记录）' }}
+            </div>
+            <div v-if="qbankSelfTest.questions[qbankSelfTest.currentIndex]?.refAnswer"
+                 class="bg-emerald-50 rounded-xl p-4 text-[13px] text-emerald-800 leading-relaxed whitespace-pre-wrap">
+              <span class="text-[11px] font-medium text-emerald-600 block mb-1">参考答案</span>
+              {{ qbankSelfTest.questions[qbankSelfTest.currentIndex].refAnswer }}
+            </div>
+            <div class="flex gap-2 pt-1">
+              <button @click="scoreQBankQuestion('bad')" class="flex-1 btn btn-sm" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;">不会</button>
+              <button @click="scoreQBankQuestion('ok')"  class="flex-1 btn btn-sm" style="background:#fffbeb;color:#d97706;border:1px solid #fde68a;">模糊</button>
+              <button @click="scoreQBankQuestion('good')" class="flex-1 btn btn-sm" style="background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;">掌握</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 自测结果 -->
+      <div v-if="qbankSelfTestSummary" class="card p-6 mb-5">
+        <h3 class="text-[14px] font-semibold text-zinc-900 mb-4">自测结果</h3>
+        <div class="flex gap-6 mb-4">
+          <div class="text-center"><div class="text-2xl font-bold text-emerald-600 tabular">{{ qbankSelfTestSummary.good }}</div><div class="text-[11px] text-zinc-500 mt-0.5">掌握</div></div>
+          <div class="text-center"><div class="text-2xl font-bold text-amber-600 tabular">{{ qbankSelfTestSummary.ok }}</div><div class="text-[11px] text-zinc-500 mt-0.5">模糊</div></div>
+          <div class="text-center"><div class="text-2xl font-bold text-rose-600 tabular">{{ qbankSelfTestSummary.bad }}</div><div class="text-[11px] text-zinc-500 mt-0.5">不会</div></div>
+        </div>
+        <div v-if="qbankSelfTestSummary.badQuestions.length" class="space-y-2">
+          <p class="text-[12px] text-zinc-500 font-medium">需要重点复习：</p>
+          <div v-for="q in qbankSelfTestSummary.badQuestions" :key="q.question"
+               class="text-[13px] text-zinc-700 bg-rose-50 px-3 py-2 rounded-lg">{{ q.question }}</div>
+        </div>
+        <button @click="qbankSelfTestSummary = null" class="btn btn-secondary btn-sm mt-3">关闭</button>
+      </div>
+
+      <!-- 空状态 -->
+      <div v-if="questionBank.length === 0" class="card p-16 text-center">
+        <div class="w-14 h-14 rounded-2xl bg-indigo-50 mx-auto mb-4 flex items-center justify-center text-2xl">📚</div>
+        <p class="text-zinc-900 font-medium mb-1">题库还是空的</p>
+        <p class="text-zinc-500 text-sm mb-5">在面经记录里填写面试题目后，点「AI 提取题目」自动整理到题库</p>
+      </div>
+
+      <template v-else>
+        <!-- 筛选栏 -->
+        <div class="flex gap-3 mb-4 flex-wrap items-center">
+          <div class="relative flex-1 min-w-[180px]">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></svg>
+            <input v-model="qbankSearch" type="text" placeholder="搜索题目" class="field pl-9 w-full" />
+          </div>
+          <select v-model="qbankFilterCompany" class="field w-40">
+            <option value="">全部公司</option>
+            <option v-for="c in qbankCompanies" :key="c" :value="c">{{ c }}</option>
+          </select>
+          <select v-model="qbankFilterRound" class="field w-36">
+            <option value="">全部轮次</option>
+            <option v-for="r in qbankRounds" :key="r" :value="r">{{ r }}</option>
+          </select>
+          <span class="text-[12px] text-zinc-500 tabular shrink-0">{{ filteredQBank.length }} 题</span>
+        </div>
+
+        <!-- 按公司分组 -->
+        <div v-if="!qbankSelectedAppId" class="space-y-3">
+          <div v-if="qbankGroupedApps.length === 0" class="card p-10 text-center text-zinc-400 text-sm">没有匹配的题目</div>
+          <div v-for="group in qbankGroupedApps" :key="group.appId"
+               class="card card-hover p-5 cursor-pointer"
+               @click="viewQBankApp(group.appId)">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <p class="font-semibold text-zinc-900">{{ group.company }}</p>
+                <p class="text-[12px] text-zinc-500 mt-0.5">{{ group.position }}</p>
+                <div class="flex gap-1.5 mt-2 flex-wrap">
+                  <span v-for="r in group.rounds" :key="r"
+                        class="text-[10.5px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full">{{ r }}</span>
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                <div class="text-2xl font-bold text-indigo-600 tabular">{{ group.count }}</div>
+                <div class="text-[11px] text-zinc-400">道题</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 题目详情列表 -->
+        <div v-else>
+          <button @click="backToQBankList" class="btn btn-ghost btn-sm mb-4">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+            返回题库
+          </button>
+          <div class="space-y-3">
+            <div v-for="(q, idx) in qbankSelectedQuestions" :key="idx" class="card p-5">
+              <div class="flex items-start gap-3">
+                <span class="shrink-0 w-6 h-6 rounded-full bg-indigo-50 text-indigo-600 text-[11px] font-bold flex items-center justify-center tabular mt-0.5">{{ idx + 1 }}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-[14px] font-medium text-zinc-900 leading-relaxed">{{ q.question }}</p>
+                  <div v-if="q.myAnswer" class="mt-3 bg-zinc-50 rounded-lg p-3 text-[13px] text-zinc-700 whitespace-pre-wrap leading-relaxed">
+                    <span class="text-[11px] text-zinc-400 font-medium block mb-1">我的回答</span>
+                    {{ q.myAnswer }}
+                  </div>
+                  <div v-if="q.refAnswer" class="mt-2 bg-emerald-50 rounded-lg p-3 text-[13px] text-emerald-800 whitespace-pre-wrap leading-relaxed">
+                    <span class="text-[11px] text-emerald-600 font-medium block mb-1">参考答案</span>
+                    {{ q.refAnswer }}
+                  </div>
+                  <div class="flex items-center gap-3 mt-3 text-[11px] text-zinc-400">
+                    <span>{{ q.company }}</span>
+                    <span class="text-zinc-200">·</span>
+                    <span>{{ q.round }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </template>
     </div>
 
